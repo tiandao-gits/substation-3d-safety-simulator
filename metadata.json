@@ -1,0 +1,6 @@
+{
+  "name": "220kV变电站安全生产3D仿真培训系统",
+  "description": "基于Three.js构建的全封闭220kV变电站安全生产3D仿真培训与自由漫游系统，支持第一/第三人称视角切换、Mixamo骨骼动作系统、Blender/GLTF模型挂载与设备巡检实训。",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
