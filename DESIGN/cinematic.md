@@ -159,7 +159,7 @@ type VnAction =
 
 - `advance` 先补全逐字输出，再进入下一行。
 - `choose` 只在当前行是 VnChoice 时有效；选项窗出现时 `advance`/`skip` 无效（铁律 4）。
-- `skip` 遇 VnChoice 必停；序幕 `skippable=false`，只允许 Esc 跳至段落卡。
+- `skip` 遇 VnChoice 必停；序幕 `skippable=false`，只允许 X 跳至段落卡。
 - flags 以 `key=value` 字符串写入（`pro_policy=defer|today`）；履历上限 30 条。
 
 ## 3. 集成与状态流
@@ -192,7 +192,7 @@ title ─▶ 序幕 VN（含 CHO-PRO-01）─▶ 段落卡 ─▶ 第一幕
 
 - 对话框：`rgba(7,16,30,0.92)` ＋ `border sky-400/50` ＋ 顶部 2 px 强调线。
 - 控件条：`[跳过 ▶▶] [履历 ▣] [自动 ▶]`；设置面板增加“文本速度 / 自动播放延迟”。
-- 键位：`Space/Enter/左键` 前进；`1–4` 选项；`Ctrl` 快进；`Esc` 呼出“继续 / 跳过整段”。
+- 键位：`Space/Enter/左键` 前进；`1–4` 选项；`Ctrl` 快进；`X` 关闭面板 / 跳过整段；`Esc` 专用于释放鼠标指针锁定。
 - 履历：最近 30 行，可滚动；正文 ≥16 px。
 
 ## 5. 资产清单

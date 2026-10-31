@@ -29,7 +29,7 @@ export function HelpModal({ onClose }: HelpModalProps) {
           onClick={onClose}
           className="rounded-xs border border-slate-700 px-3 py-1 text-xs tracking-wider text-slate-300 transition-colors hover:border-amber-400 hover:text-white cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400/60"
         >
-          [ESC] 关闭
+          [X] 关闭
         </button>
       </div>
 

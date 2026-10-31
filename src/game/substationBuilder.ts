@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { GLTFLoader, type GLTF } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js';
 import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader.js';
 import type { SubstationTextures } from './textures';
@@ -9,6 +9,102 @@ import {
   createApartmentDoorView,
   type ApartmentDoorView,
 } from './apartmentDoorView';
+
+/** 由 `scripts/split-glb.ts` 生成的 GLB 分片清单。 */
+interface GlbPartsManifest {
+  source: string;
+  totalBytes: number;
+  partBytes: number;
+  partCount: number;
+  parts: string[];
+}
+
+const GLB_PARTS_MANIFEST_SUFFIX = '.parts.json';
+
+/**
+ * 按清单并行拉取 GLB 分片，拼回与单文件字节完全一致的 ArrayBuffer。
+ *
+ * 分片只是传输层的切分（绕过单文件体积限制），不做任何重编码，
+ * 因此拼回后的数据与原始模型逐字节相同，画质不受影响。
+ *
+ * 不做任何降级回退：清单缺失、任一分支 404、总长度对不上都会直接抛错。
+ */
+async function fetchGlbParts(
+  assetBaseUrl: string,
+  fileName: string,
+  onProgress?: (loadedBytes: number, totalBytes: number) => void
+): Promise<ArrayBuffer> {
+  const manifestUrl = `${assetBaseUrl}${fileName}${GLB_PARTS_MANIFEST_SUFFIX}`;
+  const manifestResponse = await fetch(manifestUrl);
+  if (!manifestResponse.ok) {
+    throw new Error(`GLB 分片清单读不到（HTTP ${manifestResponse.status}）：${manifestUrl}`);
+  }
+  const manifest = (await manifestResponse.json()) as GlbPartsManifest;
+  if (!manifest || !Array.isArray(manifest.parts) || manifest.parts.length === 0) {
+    throw new Error(`GLB 分片清单格式不对：${manifestUrl}`);
+  }
+
+  const totalBytes = manifest.totalBytes;
+  let loadedBytes = 0;
+  // 进度回调按 1% 节流，避免每个网络分块都触发一次 React 重渲染。
+  const progressStep = Math.max(1, Math.floor(totalBytes / 100));
+  let nextReport = progressStep;
+
+  const partBuffers = await Promise.all(
+    manifest.parts.map(async (partName) => {
+      const partUrl = `${assetBaseUrl}${partName}`;
+      const response = await fetch(partUrl);
+      if (!response.ok) {
+        throw new Error(`GLB 分片读取失败（HTTP ${response.status}）：${partUrl}`);
+      }
+      if (!response.body) {
+        const whole = await response.arrayBuffer();
+        loadedBytes += whole.byteLength;
+        onProgress?.(loadedBytes, totalBytes);
+        return whole;
+      }
+      const reader = response.body.getReader();
+      const chunks: Uint8Array[] = [];
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (!value || value.byteLength === 0) continue;
+        chunks.push(value);
+        loadedBytes += value.byteLength;
+        if (loadedBytes >= nextReport) {
+          nextReport = loadedBytes + progressStep;
+          onProgress?.(loadedBytes, totalBytes);
+        }
+      }
+      let size = 0;
+      for (const chunk of chunks) size += chunk.byteLength;
+      const merged = new Uint8Array(size);
+      let offset = 0;
+      for (const chunk of chunks) {
+        merged.set(chunk, offset);
+        offset += chunk.byteLength;
+      }
+      return merged.buffer;
+    })
+  );
+
+  const assembled = new Uint8Array(totalBytes);
+  let cursor = 0;
+  for (const buffer of partBuffers) {
+    if (cursor + buffer.byteLength > totalBytes) {
+      throw new Error(
+        `GLB 分片总长度超出清单声明（${cursor + buffer.byteLength} > ${totalBytes}）`
+      );
+    }
+    assembled.set(new Uint8Array(buffer), cursor);
+    cursor += buffer.byteLength;
+  }
+  if (cursor !== totalBytes) {
+    throw new Error(`GLB 分片总长度与清单不符（${cursor} != ${totalBytes}）`);
+  }
+  onProgress?.(totalBytes, totalBytes);
+  return assembled.buffer;
+}
 
 export interface CloneSceneNodeOptions {
   x: number;
@@ -49,7 +145,13 @@ export function buildSubstationEnvironment(
   scene: THREE.Scene,
   textures: SubstationTextures,
   enableShadows: boolean,
-  loadCallbacks?: SceneLoadCallbacks
+  loadCallbacks?: SceneLoadCallbacks,
+  /**
+   * 贴图各向异性过滤等级。道路、场坪这类大面积水平面在玩家视角下被极度斜视，
+   * anisotropy=1 时远处 mipmap 采样不足，走动中会持续出现纹理摩尔纹（抖动闪动），
+   * 走近后角度变垂直才恢复正常。用渲染器上限封顶到 8 兼顾画质与采样开销。
+   */
+  maxAnisotropy = 8
 ): SubstationSceneHandles {
   const root = new THREE.Group();
   root.name = 'Substation220kVWorld';
@@ -82,109 +184,144 @@ export function buildSubstationEnvironment(
   const externalTerrain = buildExternalTerrain();
   root.add(externalTerrain.group);
 
-  const modelUrl = `${import.meta.env.BASE_URL}substation_blockout.glb`;
+  const glbFileName = 'substation_blockout.glb';
+  const assetBaseUrl = import.meta.env.BASE_URL;
   const dracoLoader = new DRACOLoader();
-  dracoLoader.setDecoderPath(`${import.meta.env.BASE_URL}draco/`);
+  dracoLoader.setDecoderPath(`${assetBaseUrl}draco/`);
   const gltfLoader = new GLTFLoader();
   gltfLoader.setDRACOLoader(dracoLoader);
-  gltfLoader.load(
-    modelUrl,
-    (gltf) => {
-      const original = gltf.scene;
-      original.name = 'BlenderSubstationOriginalLayout';
-      loadedOriginal = original;
-      // glTF cannot carry Blender's procedural/base-color node graphs: several
-      // site materials ship as untinted default white. Restore their intended
-      // tones. Grass uses embedded PBR maps and deliberately has no flat-color fallback.
-      const materialTints: Record<string, number> = {
-        'MAT_STEEL.001': 0x8d959d,
-        'MAT_DARK_STEEL.001': 0x2b3037,
-        'MAT_PORCELAIN_BROWN': 0x7c4a33,
-        'MAT_INSULATOR.001': 0x8f867c,
-        'MAT_WHITE.001': 0xd6d8d2,
-      };
-      original.traverse((child) => {
-        if (child instanceof THREE.Camera || child instanceof THREE.Light) {
-          child.visible = false;
+
+  const handleGltfLoaded = (gltf: GLTF) => {
+    const original = gltf.scene;
+    original.name = 'BlenderSubstationOriginalLayout';
+    loadedOriginal = original;
+    // glTF cannot carry Blender's procedural/base-color node graphs: several
+    // site materials ship as untinted default white. Restore their intended
+    // tones. Grass uses embedded PBR maps and deliberately has no flat-color fallback.
+    const materialTints: Record<string, number> = {
+      'MAT_STEEL.001': 0x8d959d,
+      'MAT_DARK_STEEL.001': 0x2b3037,
+      'MAT_PORCELAIN_BROWN': 0x7c4a33,
+      'MAT_INSULATOR.001': 0x8f867c,
+      'MAT_WHITE.001': 0xd6d8d2,
+    };
+    original.traverse((child) => {
+      if (child instanceof THREE.Camera || child instanceof THREE.Light) {
+        child.visible = false;
+      }
+      if ((child as THREE.Mesh).isMesh) {
+        const mesh = child as THREE.Mesh;
+        // Far-field scenery: alpha cards would cast solid-quad shadows in the shadow map.
+        const scenery = mesh.name.startsWith('EXT_CONIFER');
+        mesh.castShadow = enableShadows && !scenery;
+        mesh.receiveShadow = enableShadows && !scenery;
+        // 路面标线与沥青路面几乎共面（中心虚线只高出 5mm，危险区红线只高出 2cm），
+        // 远处深度缓冲精度不足会让两者交替赢得深度测试，表现为路面标记闪烁抖动。
+        // 给标线单独 clone 一份材质并加 polygonOffset，让它们稳定压在路面上。
+        if (mesh.name === 'Road_CenterDashes' || mesh.name === 'BAY_DANGER_LINE_220KV') {
+          const source = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+          const decals = source.map((entry) => {
+            const decal = entry.clone();
+            decal.polygonOffset = true;
+            decal.polygonOffsetFactor = -2;
+            decal.polygonOffsetUnits = -4;
+            decal.needsUpdate = true;
+            return decal;
+          });
+          mesh.material = Array.isArray(mesh.material) ? decals : decals[0];
         }
-        if ((child as THREE.Mesh).isMesh) {
-          const mesh = child as THREE.Mesh;
-          // Far-field scenery: alpha cards would cast solid-quad shadows in the shadow map.
-          const scenery = mesh.name.startsWith('EXT_CONIFER');
-          mesh.castShadow = enableShadows && !scenery;
-          mesh.receiveShadow = enableShadows && !scenery;
-          const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
-          for (const material of materials) {
-            const standard = material as THREE.MeshStandardMaterial;
-            // Blender 5.2 cannot export alphaMode MASK, so the leaf cards arrive alpha-blended.
-            if (standard?.name === 'MAT_CONIFER_LEAVES') {
-              standard.transparent = false;
-              standard.alphaTest = 0.3;
-              standard.depthWrite = true;
-              standard.needsUpdate = true;
-            }
-            if (standard?.name === 'MAT_GRASS') {
-              mesh.castShadow = false;
-              standard.metalness = 0;
-              standard.roughness = 1;
-              if (standard.normalMap) standard.normalScale.set(0.75, 0.75);
-              for (const map of [standard.map, standard.normalMap, standard.roughnessMap]) {
-                if (!map) continue;
-                map.wrapS = THREE.RepeatWrapping;
-                map.wrapT = THREE.RepeatWrapping;
-                map.anisotropy = 4;
-                map.needsUpdate = true;
-              }
-              standard.needsUpdate = true;
-            }
-            const tint = standard?.name ? materialTints[standard.name] : undefined;
-            if (tint !== undefined && !standard.map) {
-              standard.color.setHex(tint);
-              standard.needsUpdate = true;
+        const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+        for (const material of materials) {
+          const standard = material as THREE.MeshStandardMaterial;
+          // 统一提升各向异性过滤等级。GLB 默认全部是 anisotropy=1，道路/场坪这类
+          // 大面积水平面在玩家低视角下被极度斜视，mipmap 采样不足会持续抖动闪烁，
+          // 只有走近（视角变垂直）才看起来正常。
+          if (standard) {
+            for (const tex of [
+              standard.map,
+              standard.normalMap,
+              standard.roughnessMap,
+              standard.metalnessMap,
+              standard.aoMap,
+              standard.emissiveMap,
+            ]) {
+              if (!tex || tex.anisotropy === maxAnisotropy) continue;
+              tex.anisotropy = maxAnisotropy;
+              tex.needsUpdate = true;
             }
           }
+          // Blender 5.2 cannot export alphaMode MASK, so the leaf cards arrive alpha-blended.
+          if (standard?.name === 'MAT_CONIFER_LEAVES') {
+            standard.transparent = false;
+            standard.alphaTest = 0.3;
+            standard.depthWrite = true;
+            standard.needsUpdate = true;
+          }
+          if (standard?.name === 'MAT_GRASS') {
+            mesh.castShadow = false;
+            standard.metalness = 0;
+            standard.roughness = 1;
+            if (standard.normalMap) standard.normalScale.set(0.75, 0.75);
+            for (const map of [standard.map, standard.normalMap, standard.roughnessMap]) {
+              if (!map) continue;
+              map.wrapS = THREE.RepeatWrapping;
+              map.wrapT = THREE.RepeatWrapping;
+            }
+            standard.needsUpdate = true;
+          }
+          const tint = standard?.name ? materialTints[standard.name] : undefined;
+          if (tint !== undefined && !standard.map) {
+            standard.color.setHex(tint);
+            standard.needsUpdate = true;
+          }
         }
-      });
-
-      const clay = original.clone(true);
-      clay.name = 'BlenderSubstationWhiteLayout';
-      clay.traverse((child) => {
-        if ((child as THREE.Mesh).isMesh) {
-          (child as THREE.Mesh).material = clayMaterial;
-        }
-      });
-
-      detailedGroup.add(original);
-      blockoutGroup.add(clay);
-      try {
-        root.updateMatrixWorld(true);
-        apartmentDoorView = createApartmentDoorView(
-          original,
-          clay,
-          clayMaterial,
-          enableShadows
-        );
-        apartmentDoorView.setDetailMode(currentDetailMode);
-        apartmentDoorView.setOpen(apartmentDoorOpenRequested);
-        root.add(apartmentDoorView.group);
-      } catch (error) {
-        console.error('[ApartmentDoor] 蓝门交互初始化失败:', error);
-        apartmentDoorView = null;
       }
-      loadCallbacks?.onLoaded?.();
-    },
-    (event) => {
-      loadCallbacks?.onProgress?.(event.loaded, event.total);
-    },
-    (error) => {
-      console.error(MESSAGES.substationSceneLoadFailed, error);
-      loadCallbacks?.onError?.(
-        error instanceof Error
-          ? error.message
-          : MESSAGES.substationSceneLoadError
+    });
+
+    const clay = original.clone(true);
+    clay.name = 'BlenderSubstationWhiteLayout';
+    clay.traverse((child) => {
+      if ((child as THREE.Mesh).isMesh) {
+        (child as THREE.Mesh).material = clayMaterial;
+      }
+    });
+
+    detailedGroup.add(original);
+    blockoutGroup.add(clay);
+    try {
+      root.updateMatrixWorld(true);
+      apartmentDoorView = createApartmentDoorView(
+        original,
+        clay,
+        clayMaterial,
+        enableShadows
       );
+      apartmentDoorView.setDetailMode(currentDetailMode);
+      apartmentDoorView.setOpen(apartmentDoorOpenRequested);
+      root.add(apartmentDoorView.group);
+    } catch (error) {
+      console.error('[ApartmentDoor] 蓝门交互初始化失败:', error);
+      apartmentDoorView = null;
     }
-  );
+    loadCallbacks?.onLoaded?.();
+  };
+
+  const handleLoadFailed = (error: unknown) => {
+    console.error(MESSAGES.substationSceneLoadFailed, error);
+    loadCallbacks?.onError?.(
+      error instanceof Error ? error.message : MESSAGES.substationSceneLoadError
+    );
+  };
+
+  // 先按清单把 .part0/.part1 拉下来拼回完整 GLB，再交给 GLTFLoader 解析。
+  // 不做单文件回退：清单或任一分片缺失都会直接走 onError。
+  void fetchGlbParts(assetBaseUrl, glbFileName, (loaded, total) => {
+    loadCallbacks?.onProgress?.(loaded, total);
+  })
+    .then((glbBuffer) => {
+      gltfLoader.parse(glbBuffer, '', handleGltfLoaded, handleLoadFailed);
+    })
+    .catch(handleLoadFailed);
 
   // V6.2: the old violation diorama and holographic checkpoint boxes are retired.
   // Act 1 markers/clues are built in `src/game/storyProps.ts`.

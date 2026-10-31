@@ -169,9 +169,9 @@ async function main() {
     await sleep(600);
     await snap('inspection-modal-evidence.png');
 
-    // Close workbench via ESC
-    await send('Input.dispatchKeyEvent', { type: 'keyDown', code: 'Escape', key: 'Escape' }, sid);
-    await send('Input.dispatchKeyEvent', { type: 'keyUp', code: 'Escape', key: 'Escape' }, sid);
+    // Close workbench via X
+    await send('Input.dispatchKeyEvent', { type: 'keyDown', code: 'KeyX', key: 'x' }, sid);
+    await send('Input.dispatchKeyEvent', { type: 'keyUp', code: 'KeyX', key: 'x' }, sid);
     await sleep(500);
 
     // 6. Open Backpack [B]
@@ -182,8 +182,8 @@ async function main() {
     await snap('modal-backpack-no-scrollbar.png');
 
     // Close backpack
-    await send('Input.dispatchKeyEvent', { type: 'keyDown', code: 'Escape', key: 'Escape' }, sid);
-    await send('Input.dispatchKeyEvent', { type: 'keyUp', code: 'Escape', key: 'Escape' }, sid);
+    await send('Input.dispatchKeyEvent', { type: 'keyDown', code: 'KeyX', key: 'x' }, sid);
+    await send('Input.dispatchKeyEvent', { type: 'keyUp', code: 'KeyX', key: 'x' }, sid);
     await sleep(500);
 
     // 7. Open Dossier [E]
@@ -194,8 +194,8 @@ async function main() {
     await snap('modal-dossier-tabbed.png');
 
     // Close Dossier
-    await send('Input.dispatchKeyEvent', { type: 'keyDown', code: 'Escape', key: 'Escape' }, sid);
-    await send('Input.dispatchKeyEvent', { type: 'keyUp', code: 'Escape', key: 'Escape' }, sid);
+    await send('Input.dispatchKeyEvent', { type: 'keyDown', code: 'KeyX', key: 'x' }, sid);
+    await send('Input.dispatchKeyEvent', { type: 'keyUp', code: 'KeyX', key: 'x' }, sid);
     await sleep(500);
 
     // 8. Open Act Log [J]
@@ -206,8 +206,8 @@ async function main() {
     await snap('modal-act-log-no-scrollbar.png');
 
     // Close Act Log
-    await send('Input.dispatchKeyEvent', { type: 'keyDown', code: 'Escape', key: 'Escape' }, sid);
-    await send('Input.dispatchKeyEvent', { type: 'keyUp', code: 'Escape', key: 'Escape' }, sid);
+    await send('Input.dispatchKeyEvent', { type: 'keyDown', code: 'KeyX', key: 'x' }, sid);
+    await send('Input.dispatchKeyEvent', { type: 'keyUp', code: 'KeyX', key: 'x' }, sid);
     await sleep(500);
 
     // 9. Navigate to QA Review mode to test ReviewPanel

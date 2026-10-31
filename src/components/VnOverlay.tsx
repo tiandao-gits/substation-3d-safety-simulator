@@ -283,7 +283,7 @@ export function VnOverlay({
         event.preventDefault();
         event.stopPropagation();
         handleAdvance();
-      } else if (event.key === 'Escape') {
+      } else if (event.code === 'KeyX') {
         event.preventDefault();
         event.stopPropagation();
         if (isZoomed) {
@@ -421,9 +421,9 @@ export function VnOverlay({
                 type="button"
                 onClick={() => setPropClosed(true)}
                 className="flex items-center gap-1 px-1.5 py-0.5 border border-amber-400/60 bg-amber-950/30 text-amber-300 text-[10px] font-mono tracking-wider hover:bg-amber-400/20 cursor-pointer rounded-xs transition-colors shrink-0 whitespace-nowrap"
-                title="收起资料 [ESC]"
+                title="收起资料 [X]"
               >
-                <span>[ESC]</span>
+                <span>[X]</span>
                 <span>关闭 ×</span>
               </button>
             </div>
@@ -491,9 +491,9 @@ export function VnOverlay({
                 type="button"
                 onClick={() => setIsZoomed(false)}
                 className="flex items-center gap-1 px-2 py-0.5 border border-amber-400/60 bg-amber-950/40 text-amber-300 text-xs font-mono tracking-wider hover:bg-amber-400/20 cursor-pointer rounded-xs whitespace-nowrap shrink-0 transition-colors"
-                title="关闭大图 [ESC]"
+                title="关闭大图 [X]"
               >
-                <span>[ESC]</span>
+                <span>[X]</span>
                 <span>关闭大图 ×</span>
               </button>
             </div>
@@ -700,10 +700,10 @@ export function VnOverlay({
             onSkip();
           }}
           className="flex items-center gap-2 rounded-xs border border-slate-700/80 bg-[#081220]/90 px-3 py-1.5 text-slate-300 transition-all hover:border-amber-400 hover:text-amber-300 cursor-pointer group shadow-lg"
-          title="跳过对话 [ESC]"
+          title="跳过对话 [X]"
         >
           <kbd className="rounded-xs border border-slate-600 bg-slate-800 px-1.5 py-0.5 font-mono text-[10px] text-amber-300 group-hover:border-amber-400/80">
-            ESC
+            X
           </kbd>
           <span className="text-xs font-semibold tracking-widest text-slate-200 group-hover:text-amber-300">
             跳过对话

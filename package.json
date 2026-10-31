@@ -15,7 +15,8 @@
     "clean": "bun run scripts/clean.ts",
     "audit:bounds": "bun run scripts/audit-glb-bounds.ts",
     "audit:grid": "bun run scripts/glb-occupancy-grid.ts",
-    "audit:scoring": "bun run scripts/audit-scoring-values.ts"
+    "audit:scoring": "bun run scripts/audit-scoring-values.ts",
+    "split:glb": "bun run scripts/split-glb.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

@@ -75,6 +75,9 @@ import { ACT_BRIEFING_TRIGGERS } from './config/dialogues';
 import { resolveBgmKey } from './config/audio';
 import { createAct1StoryProps, type Act1StoryProps } from './game/storyProps';
 import { createStoryDebugOverlay, type StoryDebugOverlay } from './game/debugOverlay';
+import {
+  shouldLockGamePointer,
+} from './game/pointerLock';
 import { DEFAULT_SETTINGS, clearSave, loadSave, writeSave } from './game/save';
 import {
   createStoryState,
@@ -87,6 +90,7 @@ import { hudStore } from './game/hudStore';
 import { HudOverlay } from './ui/hud/HudOverlay';
 import { TitleScreen } from './ui/screens/TitleScreen';
 import { ModalHost, type ActiveModal } from './ui/modals/ModalHost';
+import { PointerLockHint } from './ui/hud/PointerLockHint';
 
 const SKYBOX_PANORAMA_URL = `${import.meta.env.BASE_URL}assets/skybox-8k.webp`;
 
@@ -105,6 +109,11 @@ export default function App() {
   );
   const [isMuted, setIsMuted] = useState(soundEngine.muted);
   const [activeModal, setActiveModal] = useState<ActiveModal>(null);
+  const [pointerLocked, setPointerLocked] = useState(false);
+  const [pointerLockHintVisible, setPointerLockHintVisible] = useState(false);
+  const pointerLockSuppressedRef = useRef(false);
+  const pointerLockWasLockedRef = useRef(false);
+  const pointerLockProgrammaticExitRef = useRef(false);
   const [perspective, setPerspective] =
     useState<CameraPerspective>('third-person');
   const [sceneLoad, setSceneLoad] = useState<{
@@ -159,6 +168,117 @@ export default function App() {
   const safetyLinesRef = useRef<SafetyLineHandles | null>(null);
   const [electrocuted, setElectrocuted] = useState(false);
   const debugOverlayRef = useRef<StoryDebugOverlay | null>(null);
+
+  // 只有可操作的游戏世界才允许锁定鼠标。VN、段落卡、黑屏、失败/结算、
+  // 加载页、系统弹窗与触电演出全部保持自由鼠标。
+  const pointerLockAllowed =
+    sceneLoad.status === 'ready' &&
+    !electrocuted &&
+    shouldLockGamePointer(
+      gameState,
+      activeModal !== null,
+      storyOverlayOpen || story.phase !== 'act1'
+    );
+  // 事件监听器（pointerdown / pointerlockchange）读取这份最新状态，避免闭包旧值
+  // 把鼠标重新锁进已经弹出的 VN 或黑屏。
+  const pointerLockAllowedRef = useRef(pointerLockAllowed);
+  pointerLockAllowedRef.current = pointerLockAllowed;
+
+  /**
+   * 尝试把鼠标锁进 WebGL 画布。浏览器要求 pointer lock 由用户手势触发，
+   * 因此这里失败（例如章节卡片自动关闭后）是正常情况，点击画面会重试。
+   */
+  const requestGamePointerLock = useCallback((bypassStateGuard = false) => {
+    if (!bypassStateGuard && !pointerLockAllowedRef.current) return;
+    const canvas = rendererRef.current?.domElement;
+    if (!canvas || document.pointerLockElement === canvas) return;
+
+    try {
+      const pending = canvas.requestPointerLock() as unknown as
+        | Promise<void>
+        | undefined;
+      void pending?.catch(() => {
+        // 没有用户手势或浏览器拒绝时保持自由鼠标，由画面点击重试。
+      });
+    } catch {
+      // 与 Promise 拒绝相同：保留系统鼠标，等待下一次点击。
+    }
+  }, []);
+
+  useEffect(() => {
+    const syncPointerLock = () => {
+      const canvas = rendererRef.current?.domElement ?? null;
+      const locked = Boolean(canvas && document.pointerLockElement === canvas);
+      const wasLocked = pointerLockWasLockedRef.current;
+      const programmaticExit = pointerLockProgrammaticExitRef.current;
+      pointerLockWasLockedRef.current = locked;
+      pointerLockProgrammaticExitRef.current = false;
+
+      if (locked && !pointerLockAllowedRef.current) {
+        // 异步锁定可能在 VN / 黑屏出现后才完成：立即退回自由鼠标。
+        pointerLockProgrammaticExitRef.current = true;
+        document.exitPointerLock();
+      } else if (locked) {
+        pointerLockSuppressedRef.current = false;
+      } else if (
+        wasLocked &&
+        !programmaticExit &&
+        pointerLockAllowedRef.current
+      ) {
+        // 玩家按 Esc 或浏览器主动解锁：保持自由鼠标，直到点击画面。
+        pointerLockSuppressedRef.current = true;
+      }
+
+      const effectiveLocked = locked && pointerLockAllowedRef.current;
+      setPointerLocked(effectiveLocked);
+      document.body.dataset.pointerLock = effectiveLocked
+        ? 'locked'
+        : 'unlocked';
+    };
+    const handlePointerLockError = () => {
+      pointerLockSuppressedRef.current = true;
+      setPointerLocked(false);
+      document.body.dataset.pointerLock = 'unlocked';
+    };
+
+    syncPointerLock();
+    document.addEventListener('pointerlockchange', syncPointerLock);
+    document.addEventListener('pointerlockerror', handlePointerLockError);
+    return () => {
+      document.removeEventListener('pointerlockchange', syncPointerLock);
+      document.removeEventListener('pointerlockerror', handlePointerLockError);
+      delete document.body.dataset.pointerLock;
+    };
+  }, []);
+
+  // 游戏/UI 状态驱动锁定：进入可操作世界锁定，弹出任何界面立即释放鼠标。
+  // 按 Esc 导致的解锁不会改变这里的依赖，因此不会被“自动锁回去”。
+  useEffect(() => {
+    if (!pointerLockAllowed) {
+      // 进入 UI、加载页、VN、黑屏或离开可操作世界：立即恢复系统鼠标。
+      pointerLockSuppressedRef.current = false;
+      if (document.pointerLockElement) {
+        pointerLockProgrammaticExitRef.current = true;
+        document.exitPointerLock();
+      }
+      // 浏览器事件可能略晚，先恢复光标与状态。
+      setPointerLocked(false);
+      document.body.dataset.pointerLock = 'unlocked';
+      return;
+    }
+    if (pointerLockSuppressedRef.current) return;
+    // 状态已经判定为“应锁定”；不要再读可能尚未来得及同步的 ref。
+    requestGamePointerLock(true);
+  }, [pointerLockAllowed, requestGamePointerLock]);
+
+  useEffect(() => {
+    if (!pointerLockAllowed || pointerLocked) {
+      setPointerLockHintVisible(false);
+      return;
+    }
+    const timer = window.setTimeout(() => setPointerLockHintVisible(true), 600);
+    return () => window.clearTimeout(timer);
+  }, [pointerLockAllowed, pointerLocked]);
 
   useEffect(() => {
     gameStateRef.current = gameState;
@@ -1129,7 +1249,7 @@ export default function App() {
           error: message,
         });
       },
-    });
+    }, Math.min(8, renderer.capabilities.getMaxAnisotropy()));
     envHandlesRef.current = envHandles;
     envHandles.setRenderDetailMode(detailModeRef.current);
 
@@ -1178,9 +1298,6 @@ export default function App() {
       keysPressed.has('ArrowDown') ||
       keysPressed.has('ArrowLeft') ||
       keysPressed.has('ArrowRight');
-    let hasLastMouse = false;
-    let lastMouseX = 0;
-    let lastMouseY = 0;
 
     const onKeyDown = (e: KeyboardEvent) => {
       if (
@@ -1190,8 +1307,10 @@ export default function App() {
         return;
       }
       const code = e.code;
+      // Esc 只用于浏览器释放指针锁定：这里不拦截、也不复用。
+      if (code === 'Escape') return;
       if (modalOpenRef.current) {
-        if (code === 'Escape') {
+        if (code === 'KeyX') {
           e.preventDefault();
           setActiveModal(null);
         } else if (code === 'KeyP') {
@@ -1206,7 +1325,7 @@ export default function App() {
       // 触电演出期间锁住操作，只保留系统类按键。
       if (
         shockStartedAt !== null &&
-        code !== 'Escape' &&
+        code !== 'KeyX' &&
         code !== 'KeyP' &&
         code !== 'KeyH'
       ) {
@@ -1227,13 +1346,9 @@ export default function App() {
         return;
       }
 
-      if (code === 'Escape') {
+      if (code === 'KeyX') {
         e.preventDefault();
-        if (playerRef.current.perspective === 'drone') {
-          handleTogglePerspective('third-person');
-        } else {
-          setActiveModal(null);
-        }
+        setActiveModal(null);
         return;
       }
 
@@ -1268,6 +1383,11 @@ export default function App() {
         handleTogglePerspective(
           playerRef.current.perspective === 'drone' ? 'third-person' : 'drone'
         );
+      } else if (code === 'KeyR') {
+        e.preventDefault();
+        if (playerRef.current.perspective === 'drone') {
+          handleTogglePerspective('third-person');
+        }
       } else if (code === 'KeyB') {
         e.preventDefault();
         setActiveModal((prev) => (prev === 'backpack' ? null : 'backpack'));
@@ -1319,67 +1439,42 @@ export default function App() {
 
     const onWindowBlur = () => {
       keysPressed.clear();
-      hasLastMouse = false;
     };
 
-    const onMouseDown = (e: MouseEvent) => {
-      hasLastMouse = true;
-      lastMouseX = e.clientX;
-      lastMouseY = e.clientY;
+    const onCanvasPointerDown = (event: PointerEvent) => {
+      // 只有左键点击画布才请求锁定；HUD/弹窗按钮会自行处理点击。
+      if (event.button !== 0) return;
+      pointerLockSuppressedRef.current = false;
+      requestGamePointerLock();
     };
 
     const onMouseMove = (e: MouseEvent) => {
-      if (gameStateRef.current !== 'playing' || storyOverlayOpenRef.current) {
-        hasLastMouse = false;
+      // 自由鼠标（Esc、UI 打开、锁定失败）不驱动镜头。
+      if (document.pointerLockElement !== renderer.domElement) return;
+      if (
+        gameStateRef.current !== 'playing' ||
+        storyOverlayOpenRef.current ||
+        modalOpenRef.current
+      ) {
         return;
       }
 
-      const targetEl = e.target as HTMLElement | null;
-      if (targetEl && targetEl.closest('input, label, [role="dialog"]')) {
-        hasLastMouse = true;
-        lastMouseX = e.clientX;
-        lastMouseY = e.clientY;
-        return;
-      }
+      const dx = e.movementX;
+      const dy = e.movementY;
+      if (dx === 0 && dy === 0) return;
 
-      let dx = 0;
-      let dy = 0;
-
-      if (document.pointerLockElement === renderer.domElement) {
-        dx = e.movementX;
-        dy = e.movementY;
-      } else if (hasLastMouse) {
-        dx = e.clientX - lastMouseX;
-        dy = e.clientY - lastMouseY;
-      } else if (e.movementX !== 0 || e.movementY !== 0) {
-        dx = e.movementX;
-        dy = e.movementY;
-      }
-
-      hasLastMouse = true;
-      lastMouseX = e.clientX;
-      lastMouseY = e.clientY;
-
-      if (dx !== 0 || dy !== 0) {
-        const p = playerRef.current;
-        if (p.perspective === 'drone') {
-          // In Drone mode, mouse rotates aerial gimbal camera while protagonist stays still
-          p.droneYaw -= dx * 0.0042;
-          p.dronePitch = Math.max(
-            -1.1,
-            Math.min(0.15, p.dronePitch - dy * 0.0036)
-          );
-        } else {
-          const updated = applyMouseLookDelta(
-            p.yaw,
-            p.pitch,
-            dx,
-            dy,
-            0.0042
-          );
-          p.yaw = updated.yaw;
-          p.pitch = updated.pitch;
-        }
+      const p = playerRef.current;
+      if (p.perspective === 'drone') {
+        // In Drone mode, mouse rotates aerial gimbal camera while protagonist stays still
+        p.droneYaw -= dx * 0.0042;
+        p.dronePitch = Math.max(
+          -1.1,
+          Math.min(0.15, p.dronePitch - dy * 0.0036)
+        );
+      } else {
+        const updated = applyMouseLookDelta(p.yaw, p.pitch, dx, dy, 0.0042);
+        p.yaw = updated.yaw;
+        p.pitch = updated.pitch;
       }
     };
 
@@ -1411,8 +1506,8 @@ export default function App() {
     window.addEventListener('keydown', onKeyDown);
     window.addEventListener('keyup', onKeyUp);
     window.addEventListener('blur', onWindowBlur);
-    window.addEventListener('mousedown', onMouseDown);
     window.addEventListener('mousemove', onMouseMove);
+    renderer.domElement.addEventListener('pointerdown', onCanvasPointerDown);
     renderer.domElement.addEventListener('wheel', onWheel, { passive: true });
     window.addEventListener('resize', onResize);
 
@@ -1919,8 +2014,8 @@ export default function App() {
       window.removeEventListener('keydown', onKeyDown);
       window.removeEventListener('keyup', onKeyUp);
       window.removeEventListener('blur', onWindowBlur);
-      window.removeEventListener('mousedown', onMouseDown);
       window.removeEventListener('mousemove', onMouseMove);
+      renderer.domElement.removeEventListener('pointerdown', onCanvasPointerDown);
       renderer.domElement.removeEventListener('wheel', onWheel);
       window.removeEventListener('resize', onResize);
       isSceneDisposed = true;
@@ -1944,6 +2039,7 @@ export default function App() {
     handleStartSimulation,
     handleToggleDetailMode,
     handleTogglePerspective,
+    requestGamePointerLock,
     updateBannerMessage,
   ]);
 
@@ -2051,6 +2147,8 @@ export default function App() {
           onDebugTeleport={handleRadarTeleport}
         />
       )}
+
+      {pointerLockHintVisible && <PointerLockHint />}
 
       <ModalHost
         activeModal={activeModal}

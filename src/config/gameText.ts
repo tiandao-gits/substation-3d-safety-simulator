@@ -173,7 +173,7 @@ export interface KeyBinding {
  * 新增按键时先改这里，再在 App 的 onKeyDown 里接线。
  */
 export const KEY_BINDINGS: KeyBinding[] = [
-  { keys: ['鼠标'], label: '拖动视角' },
+  { keys: ['鼠标'], label: '移动转动视角（进入场景自动锁定）' },
   { keys: ['W', 'A', 'S', 'D'], label: '移动（方向键同样有效）', core: true },
   { keys: ['Shift'], label: '跑动' },
   { keys: ['Space'], label: '原地跳跃' },
@@ -184,12 +184,14 @@ export const KEY_BINDINGS: KeyBinding[] = [
   { keys: ['B'], label: '现场背包' },
   { keys: ['C'], label: '角色状态' },
   { keys: ['U'], label: '无人机空中视角', core: true },
+  { keys: ['R'], label: '收回无人机' },
   { keys: ['V'], label: '第一 / 第三人称' },
   { keys: ['L'], label: '原色 / 白模' },
   { keys: ['M'], label: '静音切换' },
   { keys: ['P'], label: '系统设置' },
   { keys: ['H'], label: '操作说明' },
-  { keys: ['Esc'], label: '关闭弹窗 / 收回无人机' },
+  { keys: ['X'], label: '关闭弹窗 / 面板' },
+  { keys: ['Esc'], label: '释放鼠标', core: true },
 ];
 
 export const GAME_TEXT = {

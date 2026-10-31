@@ -74,7 +74,13 @@ function cacheControlFor(pathname: string): string {
     return 'public, max-age=31536000, immutable';
   }
   if (pathname === '/' || pathname.endsWith('.html')) return 'no-cache';
-  if (/\.(?:glb|gltf|fbx|webp|png|jpe?g|gif|mp3|ogg|woff2?)$/i.test(pathname)) {
+  // .glb.partN 与 .glb.parts.json 是 GLB 的传输分片和清单，按媒体资源缓存，
+  // 否则 12MB 的每个分片都会退化成 no-cache 反复回源。
+  if (
+    /\.(?:glb|gltf|fbx|webp|png|jpe?g|gif|mp3|ogg|woff2?)$/i.test(pathname) ||
+    /\.glb\.parts\.json$/i.test(pathname) ||
+    /\.glb\.part\d+$/i.test(pathname)
+  ) {
     return 'public, max-age=300, stale-while-revalidate=86400';
   }
   return 'no-cache';

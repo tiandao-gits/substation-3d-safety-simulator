@@ -122,9 +122,9 @@ async function main() {
     writeFileSync('C:/Users/Administrator/.gemini/antigravity/brain/bcdd6d5e-7fd0-48ab-b854-cd0218745fbd/story-fixes-desk-zoomed.png', Buffer.from(shot.data, 'base64'));
     console.log('Saved story-fixes-desk-zoomed.png');
 
-    // 3. Press Escape to close modal
+    // 3. Press X to close modal (Esc is reserved for releasing pointer lock)
     await send('Runtime.evaluate', {
-      expression: `window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))`,
+      expression: `window.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyX', key: 'x', bubbles: true }))`,
       returnByValue: true,
     }, sid);
     await sleep(600);

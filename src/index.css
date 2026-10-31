@@ -37,6 +37,11 @@
   -webkit-text-stroke: 3px rgba(9, 14, 23, 0.92);
 }
 
+/* 指针锁定时隐藏系统鼠标；UI 打开会退出锁定，恢复显示。 */
+body[data-pointer-lock='locked'] {
+  cursor: none;
+}
+
 .section-progress {
   transform-origin: left;
   animation: section-progress 4s linear forwards;

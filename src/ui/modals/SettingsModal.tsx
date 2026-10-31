@@ -58,7 +58,7 @@ export function SettingsModal({
           onClick={onClose}
           className="shrink-0 whitespace-nowrap rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 transition-colors hover:border-slate-400 hover:bg-slate-100 hover:text-slate-900 cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-400/60"
         >
-          [ESC] 关闭
+          [X] 关闭
         </button>
       </header>
 
