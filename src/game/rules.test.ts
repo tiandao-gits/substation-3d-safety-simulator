@@ -24,11 +24,13 @@ import {
 } from './rules';
 import {
   APARTMENT_CAMERA_BOUNDS,
+  APARTMENT_DOOR,
   APARTMENT_INTERIOR_FLOOR_Y,
   APARTMENT_ROOM,
   constrainApartmentCameraPosition,
   getApartmentDoorInteraction,
   isInsideApartmentRoom,
+  isPlayerBlockingApartmentDoor,
 } from './apartmentDoor';
 import { getActPoints } from './act1';
 
@@ -131,8 +133,38 @@ test('apartment entrance is a walkable doorway, not a solid building block', () 
 test('blue door interaction resolves outside and inside correctly', () => {
   assert.equal(getApartmentDoorInteraction(28.9, -22.925), 'outside');
   assert.equal(getApartmentDoorInteraction(31.6, -22.72), 'inside');
+  assert.equal(getApartmentDoorInteraction(28.9, -22.925, true), null);
+  assert.equal(getApartmentDoorInteraction(31.6, -22.72, true), null);
   assert.equal(getApartmentDoorInteraction(32.35, -22.72), null);
   assert.equal(getApartmentDoorInteraction(36.5, -22.7), null);
+
+  // 合页位于北侧 z=-23.57，把手位于南侧 z≈-22.43，开门负角度使南侧把手向外（-X）旋开，5 秒后自动关门
+  assert.equal(APARTMENT_DOOR.hingeZ, -23.57);
+  assert.ok(APARTMENT_DOOR.openAngle < 0);
+  assert.equal(APARTMENT_DOOR.autoCloseDelayMs, 5000);
+  assert.equal(isPlayerBlockingApartmentDoor(30.58, -22.925), true);
+  assert.equal(isPlayerBlockingApartmentDoor(28.9, -22.925), false);
+  assert.equal(isPlayerBlockingApartmentDoor(32.15, -22.72), false);
+
+  // 门打开后（使用 SUBSTATION_OBSTACLES），玩家可穿过门洞（x=29.5..30.8）并连续走入、走出配电室
+  for (const x of [29.5, 30.1, 30.58, 30.8]) {
+    const step = resolvePlayerCollision(x, -22.925, 0.55, SUBSTATION_OBSTACLES);
+    assert.equal(step.hitObstacle, null, `expected doorway clear at x=${x}`);
+  }
+  let walkX = 28.9;
+  let walkZ = -22.925;
+  for (let i = 0; i < 20; i += 1) {
+    const step = resolvePlayerCollision(walkX + 0.2, walkZ, 0.55, SUBSTATION_OBSTACLES);
+    walkX = step.x;
+    walkZ = step.z;
+  }
+  assert.ok(walkX > 32.5, `expected player to walk into room past x=32.5, got ${walkX}`);
+  for (let i = 0; i < 20; i += 1) {
+    const step = resolvePlayerCollision(walkX - 0.2, walkZ, 0.55, SUBSTATION_OBSTACLES);
+    walkX = step.x;
+    walkZ = step.z;
+  }
+  assert.ok(walkX < 29.2, `expected player to walk out of room past x=29.2, got ${walkX}`);
 
   assert.equal(isInsideApartmentRoom(30.9, -22.9), true);
   assert.equal(isInsideApartmentRoom(30.3, -22.9), false);

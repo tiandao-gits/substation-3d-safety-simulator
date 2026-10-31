@@ -103,7 +103,7 @@ export interface BackpackDisplayItem {
   spriteRow: number;
 }
 
-export const TOOL_SHEET_IMAGE = `${import.meta.env.BASE_URL}assets/tools-3x3.jpg`;
+export const TOOL_SHEET_IMAGE = `${import.meta.env?.BASE_URL ?? '/'}assets/tools-3x3.jpg`;
 
 export const BACKPACK_DISPLAY_ITEMS: BackpackDisplayItem[] =
   BACKPACK_TOOL_TEXT.map((tool, index) => ({
@@ -375,11 +375,11 @@ export const MESSAGES = {
     '已返回地面第三视角。',
 
   apartmentDoorEnter:
-    '已进入公寓一层 10kV 配电室。柜列带电运行，请沿巡视通道保持安全距离；按 F 可开门离开。',
+    '已打开公寓一层 10kV 配电室大门。柜列带电运行，请沿巡视通道自行走入并保持安全距离。',
   apartmentDoorExit:
-    '已离开 10kV 配电室，蓝色大门已关闭。',
-  apartmentDoorEnterPrompt: '进入 · 公寓 10kV 配电室',
-  apartmentDoorExitPrompt: '离开 · 公寓 10kV 配电室',
+    '已打开 10kV 配电室大门，可自行走出配电室。',
+  apartmentDoorEnterPrompt: '开门 · 公寓 10kV 配电室',
+  apartmentDoorExitPrompt: '开门 · 公寓 10kV 配电室',
 
   detailBlockout:
     '已切换至 Blender 灰白白模视图，场景布局与碰撞保持不变。',

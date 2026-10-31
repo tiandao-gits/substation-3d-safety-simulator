@@ -5,23 +5,25 @@ import type { AABB } from './rules';
  *
  * 坐标来自 public/substation_blockout.glb 的实测包围盒：
  * - 蓝色门扇 HV_DOOR_LEAF_N：x 30.51…30.63，z -23.57…-22.28，h 0.26…2.68
- * - 门洞净宽约 1.29 m，南侧门轴 z=-22.28，向内为正 x 方向
+ * - 门把手位于门扇南侧（z ≈ -22.43），因此北侧（z=-23.57）为门轴，南侧把手端向外（西，-x）旋开
  * - 室内地坪 CTRL_EPOXY_FLOOR 顶面标高 0.30 m
  */
 export const APARTMENT_DOOR = {
   centerX: 30.57,
   centerZ: -22.925,
   hingeX: 30.57,
-  hingeZ: -22.28,
-  /** 门扇向建筑外侧（西）旋开约 97°，避免挡住门洞。 */
-  openAngle: Math.PI * 0.54,
+  hingeZ: -23.57,
+  /** 绕北侧门轴向建筑外侧（西，-x）旋开约 97°，使南侧把手端打开且不挡门洞。 */
+  openAngle: -Math.PI * 0.54,
   exteriorStand: { x: 28.9, z: -22.925 },
   interiorStand: { x: 33.2, z: -22.72 },
   interiorReturnYaw: -Math.PI / 2,
   exteriorReturnYaw: Math.PI / 2,
-  /** 门外提示距离；室内只允许贴近门时提示退出。 */
+  /** 门外提示距离；室内贴近门口（不与 x=34.6 的开关柜检查圈重叠）时提示开门。 */
   exteriorInteractRadius: 3.2,
-  interiorInteractRadius: 1.4,
+  interiorInteractRadius: 1.75,
+  /** 门打开后自动关闭的延迟时间（毫秒）。 */
+  autoCloseDelayMs: 5000,
 } as const;
 
 /** 室内地坪比站区混凝土板高 5 cm。 */
@@ -90,12 +92,15 @@ export function isInsideApartmentRoom(x: number, z: number): boolean {
 
 /**
  * 判断玩家是否处于蓝色大门的可交互范围。
- * 门外按“西侧接近”判定，门内只要在配电室内且靠近门洞即可退出。
+ * 门已打开时不再提示，由玩家自行走进或走出门洞；
+ * 门关闭时，门外按“西侧接近”判定，门内贴近门洞时也可开门。
  */
 export function getApartmentDoorInteraction(
   x: number,
-  z: number
+  z: number,
+  doorOpen = false
 ): ApartmentDoorSide | null {
+  if (doorOpen) return null;
   const distance = Math.hypot(
     x - APARTMENT_DOOR.centerX,
     z - APARTMENT_DOOR.centerZ
@@ -119,20 +124,20 @@ export function getApartmentDoorInteraction(
 export const APARTMENT_WALL_OBSTACLES: AABB[] = [
   {
     id: 'apartment-west-south',
-    label: '公寓西墙（门洞南侧）',
-    minX: 30.43,
-    maxX: 30.73,
+    label: '公寓西墙（门洞北侧）',
+    minX: 30.48,
+    maxX: 30.69,
     minZ: -24.76,
-    maxZ: -23.57,
+    maxZ: -23.75,
     height: 13.8,
     isHazard: false,
   },
   {
     id: 'apartment-west-north',
-    label: '公寓西墙（门洞北侧）',
-    minX: 30.43,
-    maxX: 30.73,
-    minZ: -22.23,
+    label: '公寓西墙（门洞南侧）',
+    minX: 30.48,
+    maxX: 30.69,
+    minZ: -22.05,
     maxZ: -18.81,
     height: 13.8,
     isHazard: false,
@@ -200,3 +205,23 @@ export const APARTMENT_DOOR_OBSTACLE: AABB = {
   height: 2.75,
   isHazard: false,
 };
+
+/**
+ * 判断玩家圆形碰撞体是否正处于门洞关闭区域内，避免自动关门时把正跨门槛的玩家卡在门扇碰撞体里。
+ */
+export function isPlayerBlockingApartmentDoor(
+  x: number,
+  z: number,
+  radius = 0.55
+): boolean {
+  const nearestX = Math.max(
+    APARTMENT_DOOR_OBSTACLE.minX,
+    Math.min(APARTMENT_DOOR_OBSTACLE.maxX, x)
+  );
+  const nearestZ = Math.max(
+    APARTMENT_DOOR_OBSTACLE.minZ,
+    Math.min(APARTMENT_DOOR_OBSTACLE.maxZ, z)
+  );
+  return Math.hypot(x - nearestX, z - nearestZ) < radius;
+}
+

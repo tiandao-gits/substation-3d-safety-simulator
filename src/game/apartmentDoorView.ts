@@ -136,7 +136,11 @@ export function createApartmentDoorView(
     signMaterial
   );
   sign.name = 'HV_DOOR_SIGN_10KV';
-  sign.position.set(-0.16, 2.43, -0.64);
+  sign.position.set(
+    -0.16,
+    2.43,
+    APARTMENT_DOOR.centerZ - APARTMENT_DOOR.hingeZ
+  );
   sign.rotation.y = -Math.PI / 2;
   detailedPivot.add(sign);
 
