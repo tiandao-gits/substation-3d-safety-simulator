@@ -120,7 +120,7 @@ export function SettingsModal({
 
         <div className="flex items-center justify-between px-1 text-xs font-medium text-slate-400">
           <span>{BGM_CREDIT}</span>
-          <span>单曲循环 · 默认静音</span>
+          <span>单曲循环 · 默认开启</span>
         </div>
 
         <div className="divide-y divide-slate-100 overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">

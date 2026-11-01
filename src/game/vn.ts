@@ -247,3 +247,20 @@ export function lineById(scene: VnScene, id: string): VnLine | null {
   const entry = scene.lines.find((l) => l.id === id);
   return entry && isLine(entry) ? entry : null;
 }
+
+/**
+ * 本场的立绘阵容。
+ *
+ * cast 就是这场对话的到场人员名单：**从第一帧起全员在场**，不按"谁先开口"逐行放行；
+ * 没轮到说话的人由演出层压暗、缩小呈隐退态，轮到他时再点亮前移。
+ * 名单之外的人（电话/无线电里的角色、第一人称的陆川）永远不占立绘槽位，
+ * 所以 `dialogues.test.ts` 要求 cast 成员必须在同一场景里有台词，且在场说话人都得进名单。
+ *
+ * 没有写 cast 的场景退化为单人构图：只有当前说话人。
+ */
+export function sceneCastMembers(scene: VnScene, speakerId: string | null): VnCastMember[] {
+  const roster = scene.cast ?? [];
+  if (roster.length > 0) return roster;
+  if (!speakerId) return [];
+  return [{ charId: speakerId, pose: 'normal', slot: 'center' }];
+}

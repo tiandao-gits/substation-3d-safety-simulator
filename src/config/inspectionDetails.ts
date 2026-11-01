@@ -62,7 +62,7 @@ export const INSPECTION_POINT_DETAILS: Record<Act1PointId, InspectionPointDetail
     bayName: '1# / 2# 主变之间防火墙',
     equipmentType: '主变防火墙抹灰层',
     taskIntro:
-      '1# 与 2# 主变之间的防火墙，东侧抹面局部受潮。核查墙面裂缝、空鼓与脱层范围，用敲击法判断抹灰层是否空鼓，发现空鼓应划定范围并凿除重做。',
+      '1# 与 2# 主变之间的防火墙，靠东段（1# 主变侧）抹面局部受潮。核查墙面裂缝、空鼓与脱层范围，用敲击法判断抹灰层是否空鼓，发现空鼓应划定范围并凿除重做。',
     safetyRequirement:
       '站在防火墙外侧检查，不进入相邻带电主变通道；敲击时不得攀爬或倚靠墙体。',
   },

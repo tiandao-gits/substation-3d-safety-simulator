@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createAct1State } from './act1';
+import { createAct1State, ACT1_SCORE_BASE } from './act1';
 import { PROLOGUE } from '../config/dialogues';
 import {
   act1PendingLine,
@@ -8,6 +8,7 @@ import {
   createQaCompletedAct1,
   endingForRun,
   isStoryInputLocked,
+  PROLOGUE_DEFER_PENALTY,
   settlementScore,
   settlementScoreForStory,
   storyFromSave,
@@ -67,8 +68,34 @@ test('the flow runs title → prologue → section card → act 1', () => {
   assert.equal(isStoryInputLocked(s), false);
 });
 
-test('the prologue choice is mandatory and skip never answers it', () => {
-  let s = toChoice();
+test('序章选"能晚上补的先补"起手扣 5 分，选当天闭环不扣', () => {
+  const defer = choosePolicy('defer');
+  assert.equal(defer.phase, 'section-card');
+  assert.equal(defer.totalScore, ACT1_SCORE_BASE - PROLOGUE_DEFER_PENALTY);
+
+  const today = choosePolicy('today');
+  assert.equal(today.phase, 'section-card');
+  assert.equal(today.totalScore, ACT1_SCORE_BASE);
+});
+
+test('序章扣分只结算一次，第一幕重试不会重复扣', () => {
+  let s = choosePolicy('defer');
+  s = storyReducer(s, { type: 'section-done' });
+  assert.equal(s.act1?.score, ACT1_SCORE_BASE - PROLOGUE_DEFER_PENALTY);
+  assert.ok(
+    s.act1?.deductions.some((item) => item.id === 'prologue-defer'),
+    '第一幕应带上序章扣分明细'
+  );
+
+  const retried = storyReducer(s, { type: 'retry-act' });
+  assert.equal(
+    retried.act1?.score,
+    ACT1_SCORE_BASE - PROLOGUE_DEFER_PENALTY,
+    '重试本幕不能二次扣分'
+  );
+});
+
+test('the prologue choice is mandatory and skip never answers it', () => {  let s = toChoice();
   assert.equal(s.policy, null);
   const before = s.vn?.index;
   s = storyReducer(s, { type: 'vn-skip' });

@@ -75,20 +75,10 @@ export function createAct1StoryProps(): Act1StoryProps {
     }
   }
 
-  // 1. Act 1 — 10kV 3号柜 B相母排接头过热微红热斑（variant C）
-  const hv = getAct1Point('hv-10kv');
-  const hvHotspotMat = new THREE.MeshBasicMaterial({
-    color: 0xff3b1f,
-    transparent: true,
-    opacity: 0.85,
-  });
-  const hvHotspot = new THREE.Mesh(
-    new THREE.SphereGeometry(0.11, 16, 12),
-    hvHotspotMat
-  );
-  hvHotspot.position.set(hv.x, 1.48, hv.z - 0.82);
-  hvHotspot.name = 'prop-hv10kv-hotspot';
-  group.add(hvHotspot);
+  // 1. Act 1 — 10kV 3号柜 B相母排接头（variant C 过热）。
+  // 设计约束：巡检点标记必须状态中立。缺陷不得用跳动的红点、红色热斑等
+  // 只出现在"有故障"点位上的视觉提示标出，否则玩家无需检测即可看答案。
+  // 过热只能由红外测温读数与判据屏揭示，场景内不放置任何差异化标记。
 
   // 2. Act 1 — 巡视通道净宽 0.78m 红色激光测距标尺线
   const aisle = getAct1Point('aisle');
@@ -107,23 +97,14 @@ export function createAct1StoryProps(): Act1StoryProps {
   aisleLaser.name = 'prop-aisle-laser';
   group.add(aisleLaser);
 
-  // 3. Act 1 — F02 间隔 B 相引线接头过热热斑（variant B）
-  const bay = getAct1Point('bay-temp');
-  const bayHotspotMat = new THREE.MeshBasicMaterial({
-    color: 0xff451a,
-    transparent: true,
-    opacity: 0.88,
-  });
-  const bayHotspot = new THREE.Mesh(
-    new THREE.SphereGeometry(0.14, 16, 12),
-    bayHotspotMat
-  );
-  bayHotspot.position.set(bay.x, 2.75, bay.z - 1.3);
-  bayHotspot.name = 'prop-bay-hotspot';
-  group.add(bayHotspot);
+  // 3. Act 1 — F02 间隔 B 相引线接头（variant B 过热）。
+  // 同上：现场不做任何差异化提示，靠测温读数判定。
 
-  // 4. Act 2 — 1#/2# 主变防火墙东侧受潮暗斑与空鼓红粉笔圈记（variant B）
+  // 4. Act 2 — 1#/2# 主变防火墙靠东段（1# 主变侧）受潮暗斑与空鼓红粉笔圈记（variant B）
+  // 墙面沿 x 延伸、法线朝 ±z，缺陷必须贴在墙的 1# 侧南面，不能悬浮在空中或落到 2# 侧。
   const wall = getAct1Point('a2-wall');
+  /** 1#/2# 主变之间那道防火墙：中心线 z=12.87、半厚 0.26（见 rules.ts FIREWALL_Z）。 */
+  const WALL_FACE_Z = 12.87 + 0.26;
   const wallDamp = new THREE.Mesh(
     new THREE.PlaneGeometry(0.82, 0.62),
     new THREE.MeshStandardMaterial({
@@ -134,8 +115,7 @@ export function createAct1StoryProps(): Act1StoryProps {
       side: THREE.DoubleSide,
     })
   );
-  wallDamp.rotation.y = Math.PI / 2;
-  wallDamp.position.set(wall.x - 0.35, 1.55, wall.z);
+  wallDamp.position.set(wall.x - 0.55, 1.55, WALL_FACE_Z + 0.012);
   wallDamp.name = 'prop-wall-damp';
 
   const wallHollowRing = new THREE.Mesh(
@@ -147,8 +127,7 @@ export function createAct1StoryProps(): Act1StoryProps {
       opacity: 0.9,
     })
   );
-  wallHollowRing.rotation.y = Math.PI / 2;
-  wallHollowRing.position.set(wall.x - 0.33, 1.55, wall.z);
+  wallHollowRing.position.set(wall.x - 0.5, 1.55, WALL_FACE_Z + 0.022);
   wallHollowRing.name = 'prop-wall-hollow';
   group.add(wallDamp, wallHollowRing);
 
@@ -217,16 +196,7 @@ export function createAct1StoryProps(): Act1StoryProps {
       group.visible = visible;
       if (!visible) return;
 
-      const thermalPulse = 0.65 + 0.35 * Math.sin(elapsed * 5.2);
-      hvHotspot.visible = act === 1 && variant === 'C';
-      hvHotspotMat.opacity = thermalPulse;
-      hvHotspot.scale.setScalar(0.92 + 0.16 * Math.sin(elapsed * 4.5));
-
       aisleLaser.visible = act === 1 && !done.has('aisle');
-
-      bayHotspot.visible = act === 1 && variant === 'B';
-      bayHotspotMat.opacity = thermalPulse;
-      bayHotspot.scale.setScalar(0.92 + 0.18 * Math.sin(elapsed * 4.8));
 
       const showWallDefect = act === 2 && variant === 'B';
       wallDamp.visible = showWallDefect;

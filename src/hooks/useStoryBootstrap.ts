@@ -6,6 +6,7 @@ import {
   getActPointIds,
   getActPoints,
   type Act1PointId,
+  type ActNo,
 } from '../game/act1';
 import {
   findStandableSpotNear,
@@ -31,6 +32,11 @@ export interface UseStoryBootstrapOptions {
   storyRef: MutableRefObject<StoryState>;
   dispatchStory: Dispatch<StoryAction>;
   playerRef: MutableRefObject<PlayerState>;
+  /**
+   * `?qa=act1&act=N&cutscene=1` 时改为从该幕的开场过场（若有）进入，
+   * 而不是直接把人放在巡检点旁。由 App 提供（内部调 applyActSpawn）。
+   */
+  onPlayActCutscene?: (act: ActNo) => void;
 }
 
 /**
@@ -48,6 +54,7 @@ export function useStoryBootstrap({
   storyRef,
   dispatchStory,
   playerRef,
+  onPlayActCutscene,
 }: UseStoryBootstrapOptions): void {
   const storyPhase = story.phase;
 
@@ -134,6 +141,11 @@ export function useStoryBootstrap({
       });
       document.body.dataset.state = 'playing';
       setGameState('playing');
+      // `cutscene=1`：不走"放在巡检点旁"，改播该幕开场过场（第三幕是下楼出门 CG）。
+      if (params.get('cutscene') === '1' && onPlayActCutscene) {
+        onPlayActCutscene(qaAct);
+        return;
+      }
       const firstPoint = getActPoints(qaAct)[0];
       const point = getAct1Point(
         (params.get('point') as Act1PointId | null) ?? firstPoint.id

@@ -413,12 +413,14 @@ const ACT2_POINTS_DEF: Act1PointDef[] = [
     name: '主变防火墙',
     shortName: '防火墙空鼓',
     zone: '1# / 2# 主变之间防火墙',
-    x: -20.5,
-    z: 11.4,
+    // 站在 1# 主变侧（墙南面外侧）：防火墙中心线 z=12.87、半厚 0.26，
+    // 点位必须落在墙的 1# 侧，不能落到墙北面 2# 主变那边。
+    x: -20.6,
+    z: 13.9,
     focusY: 1.6,
     radius: 4.5,
     profile: 'construction',
-    clue: '1# 与 2# 主变之间的防火墙，东侧抹面局部受潮；现场敲击检查抹灰层空鼓与脱层。',
+    clue: '1# 与 2# 主变之间的防火墙，靠东段（1# 主变侧）抹面局部受潮；现场敲击检查抹灰层空鼓与脱层。',
     requiredActions: ['visual', 'wall-hollow'],
     actions: {
       visual: [VISUAL_ACTION],
@@ -1200,7 +1202,7 @@ export function applyAct1Action(
   } else if (spec.id === 'wall-hollow') {
     text =
       state.variant === 'B'
-        ? '敲击：防火墙东侧抹灰层回声发空，局部脱层。'
+        ? '敲击：防火墙 1# 主变侧抹灰层回声发空，局部脱层。'
         : '敲击：防火墙抹面密实，回声均匀。';
   } else if (spec.id === 'oil-temp') {
     // 1# 主变已停电，读数取停电后复测值：停电前负荷与渗漏/油位一起作为佐证。
@@ -1239,7 +1241,7 @@ export function applyAct1Action(
   } else if (spec.id === 'wall-crack') {
     text =
       state.variant === 'B'
-        ? '辅助核验：防火墙东侧受潮处抹灰裂缝宽度 1.8 mm（标准 ≤ 0.3 mm），伴随局部脱层。'
+        ? '辅助核验：防火墙 1# 主变侧受潮处抹灰裂缝宽度 1.8 mm（标准 ≤ 0.3 mm），伴随局部脱层。'
         : '辅助核验：墙面仅见表面收缩细纹（< 0.15 mm），无结构性与脱层裂缝。';
   } else if (spec.id === 'oil-light') {
     text =
@@ -1301,7 +1303,7 @@ export function getAct1VisualText(
         : '观察：人员列队、着装齐全，特种作业台账与在场人员一致。';
     case 'a2-wall':
       return variant === 'B'
-        ? '观察：防火墙东侧抹灰层有细微裂缝与受潮痕迹。'
+        ? '观察：防火墙 1# 主变侧抹灰层有细微裂缝与受潮痕迹。'
         : '观察：防火墙表面平整，无裂缝、空鼓与脱层。';
     case 'a2-oil':
       return variant === 'C'

@@ -54,6 +54,8 @@ export interface SubstationSceneInstance {
   debugOverlay: StoryDebugOverlay | null;
   smoothCamPos: THREE.Vector3;
   smoothLookAt: THREE.Vector3;
+  /** 首帧预热完成前 runtime 跳过绘制，把编译/贴图上传藏在加载遮罩之后。 */
+  readiness: { renderEnabled: boolean };
   dispose: () => void;
 }
 
@@ -171,6 +173,8 @@ export function createSubstationScene({
 
       skyboxPanoramaTexture = displayTexture;
       scene.background = displayTexture;
+      // 8K 环境贴图在加载阶段先上传，避免它落在进场后的某一帧上。
+      renderer.initTexture(displayTexture);
     },
     undefined,
     (error) => {
@@ -260,16 +264,64 @@ export function createSubstationScene({
     });
   };
 
+  const readiness = { renderEnabled: false };
+  let readySequenceStarted = false;
   const markSceneReady = () => {
     if (
       isSceneDisposed ||
       environmentFailed ||
       characterFailed ||
       !environmentReady ||
-      !characterReady
+      !characterReady ||
+      readySequenceStarted
     ) {
       return;
     }
+    readySequenceStarted = true;
+    onSceneLoadChange({
+      status: 'loading',
+      progress: 0.99,
+      loadedMB: combinedLoadedBytes() / (1024 * 1024),
+      stage: 'finalizing',
+    });
+    // 预热属于加载的一部分：进度停在 99%，预热结束才置为 ready。
+    // 先确保加载条把「正在完成场景初始化」这一帧画出来，再开始阻塞式预热；
+    // 后台标签页 rAF 不触发，用定时器兜底，避免场景永远不就绪。
+    let warmupStarted = false;
+    const startWarmup = () => {
+      if (warmupStarted) return;
+      warmupStarted = true;
+      finishSceneInitialization();
+    };
+    window.requestAnimationFrame(() => window.requestAnimationFrame(startWarmup));
+    window.setTimeout(startWarmup, 250);
+  };
+
+  /**
+   * 首帧预热：把着色器编译、阴影深度材质与贴图上传放在加载遮罩之后完成。
+   * 若留给第一次可见渲染，会一次性编译数十个程序、上传上百张贴图，
+   * 表现为进入游戏后卡住数秒。预热期间 runtime 暂停绘制，加载条照常收尾。
+   */
+  function finishSceneInitialization() {
+    if (isSceneDisposed) return;
+    // 1) 预编译场景内全部材质（含视锥外的物体），换机位时不再触发程序编译。
+    // 角色在标题阶段默认隐藏；预热时临时显形，否则它的蒙皮程序、阴影深度材质与贴图
+    // 会留到玩家按下开始后才编译/上传，形成进入游戏后的那一下卡顿。
+    const rigWasVisible = charController.root.visible;
+    charController.root.visible = true;
+    renderer.compile(scene, camera);
+    // 2) 真实绘制一帧：补齐阴影深度程序与当前机位的贴图上传。
+    renderer.render(scene, camera);
+    // 3) 标题机位再补一帧，覆盖标题界面首屏用到的贴图。
+    camera.position.set(26, 1.95, 31.5);
+    camera.lookAt(3, 3.2, 2);
+    renderer.render(scene, camera);
+    charController.root.visible = rigWasVisible;
+    const initRig = computeCameraRigTransform(player, initialThirdPersonDist);
+    camera.position.set(initRig.camX, initRig.camY, initRig.camZ);
+    camera.lookAt(initRig.lookX, initRig.lookY, initRig.lookZ);
+    if (isSceneDisposed) return;
+    readiness.renderEnabled = true;
     document.body.dataset.scene = 'ready';
     onSceneReady();
     onSceneLoadChange({
@@ -277,7 +329,7 @@ export function createSubstationScene({
       progress: 1,
       loadedMB: combinedLoadedBytes() / (1024 * 1024),
     });
-  };
+  }
 
   const markCharacterFailed = () => {
     if (isSceneDisposed || characterFailed) return;
@@ -408,6 +460,7 @@ export function createSubstationScene({
     debugOverlay,
     smoothCamPos,
     smoothLookAt,
+    readiness,
     dispose,
   };
 }

@@ -21,7 +21,7 @@ export interface GamePointerLockControls {
 
 /**
  * 管理 WebGL 画布的 Pointer Lock 生命周期：
- * - 仅在可操作 3D 世界（sceneReady && playing && 无弹窗/VN/触电）允许锁定鼠标
+ * - 仅在可操作 3D 世界（sceneReady && playing && 无弹窗/VN/过场/触电）允许锁定鼠标
  * - 玩家按 Esc 主动释放后不自动重锁，直到再次左键点击画布
  * - 进入任何 UI / VN / 结算层时立即退回系统自由鼠标
  */

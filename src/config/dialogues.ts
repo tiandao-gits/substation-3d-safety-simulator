@@ -22,11 +22,11 @@ export const PROLOGUE: VnScene = {
     {
       id: 'PRO-01',
       speakerId: 'chen',
-      text: '今天三处：先去公寓一层 10kV 配电室，再走中部开关间隔的巡视通道和 BAY 测温；十点半到 1# 主变检修现场参加班前会；下午去北边施工现场。三处走完回办公室。',
+      text: '小陆，今天例行巡检后，十点半到主变检修现场参加班前会；下午去下北区施工现场。',
       propFrame: 'prop-route-map',
     },
     { id: 'PRO-02', speakerId: 'luchuan', text: '收到。' },
-    { id: 'PRO-03', speakerId: 'chen', text: '北区今天什么活？' },
+    { id: 'PRO-03', speakerId: 'chen', text: '王工，北区施工现场那边活做的咋样？' },
     {
       id: 'PRO-04',
       speakerId: 'wang',
@@ -42,7 +42,7 @@ export const PROLOGUE: VnScene = {
     {
       id: 'PRO-08',
       speakerId: 'chen',
-      text: '防火墙那边就是 3# 备用变，带着电、没带负荷。一墙之隔，动火、堆料、挖坑，哪样都能捅到墙这边来。',
+      text: '防火墙那边就是备变，带着电。一墙之隔，动火、堆料、挖坑，哪样都能捅到墙这边来。',
     },
     { id: 'PRO-09', speakerId: 'luchuan', text: '北区我走细一点。' },
     {
@@ -95,16 +95,16 @@ export interface SectionCard {
 
 export const PROLOGUE_SECTION_CARD: SectionCard = {
   time: '同日　08:00　晴',
-  place: '公寓一层 · 10kV 配电室',
+  place: '10kV 配电室',
 };
 
 export const ACT1_TASK_CARD = {
   title: '第一幕 · 正常巡检',
   time: '08:00',
   background:
-    '例行巡视。前后两片 220kV 开关设备区带电运行，公寓一层 10kV 配电室带电运行，今日无操作、无检修。安全监理只做外观巡视与仪器初筛，发现异常记录并通知运维，不替代运维诊断。',
+    '例行巡视。前后两片 220kV 开关设备区带电运行，10kV 配电室带电运行，今日无操作、无检修。安全监理只做外观巡视与仪器初筛，发现异常记录并通知运维，不替代运维诊断。',
   scope:
-    '公寓一层 10kV 配电室设备、站区中部巡视通道、前侧 F02 间隔 BAY 设备温度。',
+    '10kV 配电室设备、站区中部巡视通道、前侧 F02 间隔 BAY 设备温度。',
   known: '巡检记录与设备台账在备忘录；晴，气温 26 ℃，风速 2 m/s。',
 };
 
@@ -173,6 +173,7 @@ export const ACT2_DOSSIER = {
         '安全措施：停电、验电、装设接地线、悬挂标示牌、装设围栏；围栏、接地线、监护人三样到位后方可开工。',
         '2# 主变运行带负荷，与检修区一墙之隔；围栏外为带电通道，不得跨越。',
         '班前会交底：工作负责人、专责监护人、施工人员签名齐全。',
+        '特种作业操作证每 3 年复审一次，超期未复审不得上岗（《特种作业人员安全技术培训考核管理规定》）。',
       ],
     },
     {
@@ -259,7 +260,7 @@ export const ACT1_LINES: Record<string, VnLine> = {
   'A1-08': {
     id: 'A1-08',
     speakerId: 'luchuan',
-    text: '通道净宽，量出来是这个。材料堆进来了。',
+    text: '通道上堆了材料,得清理掉',
   },
   'A1-10': {
     id: 'A1-10',
@@ -284,7 +285,7 @@ export const ACT1_LINES: Record<string, VnLine> = {
   'A2-02': {
     id: 'A2-02',
     speakerId: 'luchuan',
-    text: '先等等。我是监理，人、证、现场，我都要过一遍。',
+    text: '先等等。人、证、现场，我都要过一遍。',
   },
   'A2-03': {
     id: 'A2-03',
@@ -294,7 +295,7 @@ export const ACT1_LINES: Record<string, VnLine> = {
   'A2-04': {
     id: 'A2-04',
     speakerId: 'wang',
-    text: '陆工，台账在赵志远那儿，你要看随时看。活排得满，先开工，缺什么后补？',
+    text: '台账在赵志远那儿，你要看随时看。',
   },
   'A2-05': {
     id: 'A2-05',
@@ -303,23 +304,23 @@ export const ACT1_LINES: Record<string, VnLine> = {
   },
   'A3-00': {
     id: 'A3-00',
-    speakerId: 'zhao',
-    text: '北区人手不够，安全员今天没来，我两头跑。',
+    speakerId: 'luchuan',
+    text: '材料堆西侧那名工人没戴安全帽。',
   },
   'A3-01': {
     id: 'A3-01',
     speakerId: 'luchuan',
-    text: '材料堆西侧那名工人没戴安全帽。',
+    text: '距离太远，地面拍不清；',
   },
   'A3-02': {
     id: 'A3-02',
     speakerId: 'luchuan',
-    text: '距离太远，地面拍不清；先升空取证，再落地查基坑和配电箱。',
+    text: '升空取景，把人和头部放在画面正中。',
   },
   'A3-03': {
     id: 'A3-03',
-    speakerId: 'system',
-    text: '按 U 启用无人机，从空中对准未戴安全帽的人员按 G 取证。',
+    speakerId: 'luchuan',
+    text: '别以为躲后面吸烟就拍不到了。',
   },
   'A1-11': {
     id: 'A1-11',
@@ -331,7 +332,7 @@ export const ACT1_LINES: Record<string, VnLine> = {
     id: 'A1-12',
     speakerId: 'luchuan',
     channel: 'phone',
-    text: '下午挪，现在挪。通道是给人跑的，不是给木料堆躺的。',
+    text: '现在挪。通道不是给木料堆躺的。',
   },
   'A1-END-1': {
     id: 'A1-END-1',
@@ -342,12 +343,12 @@ export const ACT1_LINES: Record<string, VnLine> = {
   'A2-END-1': {
     id: 'A2-END-1',
     speakerId: 'wang',
-    text: '陆工，1# 主变这边人也核了、墙和本体也看了，活排得满，我们先开工，手续边干边补？',
+    text: '陆工，这边人也核了、墙和本体也看了，活排得满，我们先开工，手续边干边补？',
   },
   'A2-END-2': {
     id: 'A2-END-2',
     speakerId: 'luchuan',
-    text: '一墙之隔就是带负荷运行的 2# 主变。人员资格、防火墙和主变本体的记录今天必须按规程落纸，下午我去北侧施工区。',
+    text: '安全不能后行。人员资格、防火墙和主变本体记录今天必须按规程落纸。',
   },
 };
 
@@ -391,7 +392,7 @@ export const ENDING_GOOD: VnScene = {
     {
       id: 'END-G01',
       speakerId: 'chen',
-      text: '三处走完了。今天看见的，都记下了？',
+      text: '今天看见的，都记下了？',
     },
     {
       id: 'END-G02',
@@ -425,10 +426,11 @@ export const ENDING_END: VnScene = {
   id: 'ending-end',
   bg: 'bg-meeting-night',
   skippable: true,
+  // 事故复盘为现场沟通：陈立群、王振与运维值班负责人周敏都在场。
   cast: [
     { charId: 'wang', pose: 'normal', slot: 'left' },
     { charId: 'chen', pose: 'normal', slot: 'center' },
-    { charId: 'zhao', pose: 'normal', slot: 'right' },
+    { charId: 'zhou', pose: 'normal', slot: 'right' },
   ],
   lines: [
     {
@@ -459,8 +461,7 @@ export const ENDING_END: VnScene = {
     {
       id: 'END-E06',
       speakerId: 'zhou',
-      channel: 'phone',
-      text: '运维这边也缺一份通知记录，我补不了。',
+      text: '运维这边的通知记录我手里也没有，这份我补不了。',
     },
     {
       id: 'END-E07',
@@ -484,7 +485,7 @@ export const ENDING_DELAY: VnScene = {
     {
       id: 'END-D01',
       speakerId: 'chen',
-      text: '三幕走完了，隐患都闭环了。可工期为什么拖了三天？',
+      text: '隐患都处理了，可工期为什么拖了三天？',
     },
     {
       id: 'END-D02',

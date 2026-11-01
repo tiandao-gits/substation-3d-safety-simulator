@@ -36,15 +36,18 @@ import {
   findNearestAct1Point,
   findNearestOpenAct1Point,
   getActPointIds,
-  getActPoints,
   isPointCovered,
   isPointResolved,
   type Act1PointId,
+  type ActNo,
 } from './game/act1';
 import type { CaptureEvidenceResult } from './game/evidence';
 import { captureSceneEvidence } from './game/evidenceCapture';
+import { ACT_START_SPAWNS } from './config/actSpawns';
+import { cutsceneEntryYaw } from './game/openingCutscene';
 import { createSubstationScene, type SceneLoadState } from './game/sceneSetup';
-import { startSimulationRuntime } from './game/simulationRuntime';
+import { startSimulationRuntime, type CutsceneState } from './game/simulationRuntime';
+import { CutsceneOverlay } from './ui/hud/CutsceneOverlay';
 import { DEFAULT_SETTINGS, clearSave, loadSave } from './game/save';
 import {
   createStoryState,
@@ -123,6 +126,11 @@ export default function App() {
   const sceneRef = useRef<THREE.Scene | null>(null);
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
   const [electrocuted, setElectrocuted] = useState(false);
+  const cutsceneRef = useRef<CutsceneState | null>(null);
+  const [cutscene, setCutscene] = useState<{
+    caption?: string;
+    subCaption?: string;
+  } | null>(null);
 
   const { pointerLockHintVisible, handleCanvasPointerDown } =
     useGamePointerLock({
@@ -131,8 +139,13 @@ export default function App() {
       electrocuted,
       gameState,
       modalOpen: activeModal !== null,
-      storyBlockingWorld: storyOverlayOpen || story.phase !== 'act1',
+      // 幕间过场（黑边/黑屏）也属于不可操作状态，必须释放鼠标。
+      storyBlockingWorld:
+        storyOverlayOpen || story.phase !== 'act1' || cutscene !== null,
     });
+
+  /** QA `cutscene=1` 用的中转：applyActSpawn 定义在 bootstrap 之后。 */
+  const cutsceneSpawnRef = useRef<(act: ActNo) => void>(() => {});
 
   useStoryBootstrap({
     initialAutostart,
@@ -142,6 +155,9 @@ export default function App() {
     storyRef,
     dispatchStory,
     playerRef,
+    // ?qa=act1&act=N&cutscene=1 → 直接从该幕开场过场进入（applyActSpawn 在下方定义，
+    // 用 ref 中转避免声明顺序问题）。
+    onPlayActCutscene: (act) => cutsceneSpawnRef.current(act),
   });
 
   useEffect(() => {
@@ -164,6 +180,71 @@ export default function App() {
   const updateBannerMessage = useCallback((msg: string) => {
     setSafetyBannerText(msg);
   }, []);
+
+  /**
+   * 把玩家放到某一幕的出生点。
+   * playCutscene 为 true 且有 cutscene 时，人物先站在过场起点（第三幕是公寓楼梯顶），
+   * 由 runtime 按时间轴演完下楼 → 开门 → 走到楼下；重玩本幕则直接站在出生点、面朝西方。
+   */
+  const applyActSpawn = useCallback(
+    (act: ActNo, playCutscene: boolean) => {
+      const spawn = ACT_START_SPAWNS[act];
+      const script = playCutscene ? spawn.cutscene : undefined;
+      const entry = script?.waypoints[0];
+      // 过场起点在室内（楼梯顶），不参与碰撞修正；否则会被墙体 AABB 推开。
+      const safe = entry
+        ? { x: entry.x, z: entry.z }
+        : resolvePlayerCollision(spawn.x, spawn.z, 0.55);
+      const p = playerRef.current;
+      p.x = safe.x;
+      p.z = safe.z;
+      p.y = entry ? entry.y : siteGroundHeight(safe.x, safe.z);
+      p.vx = 0;
+      p.vy = 0;
+      p.vz = 0;
+      p.isGrounded = true;
+      p.jumpTimer = 0;
+      p.jumpLaunchTimer = 0;
+      p.yaw = script ? cutsceneEntryYaw(script) : spawn.yaw;
+      p.pitch = 0.02;
+      p.perspective = 'third-person';
+      const rig = charControllerRef.current;
+      if (rig) {
+        rig.root.rotation.y = p.yaw;
+        rig.setFirstPersonMode(false);
+      }
+      cutsceneRef.current = script
+        ? { script, startedAt: performance.now(), skipRequested: false }
+        : null;
+      setCutscene(
+        script ? { caption: script.caption, subCaption: script.subCaption } : null
+      );
+      if (script) setPerspective('third-person');
+      envHandlesRef.current?.setStairDoorOpen(0);
+      cameraSnapRequestedRef.current = true;
+      if (spawn.note) updateBannerMessage(spawn.note);
+    },
+    [updateBannerMessage]
+  );
+
+  /** 跳过开场过场：下一帧直接落到结尾帧，控制权立即交还。 */
+  const handleSkipCutscene = useCallback(() => {
+    if (cutsceneRef.current) cutsceneRef.current.skipRequested = true;
+  }, []);
+  const handleCutsceneEnd = useCallback(() => setCutscene(null), []);
+  cutsceneSpawnRef.current = (act) => applyActSpawn(act, true);
+
+  /**
+   * 幕间卡片 → 新一幕开场：把玩家送到该幕入口（第三幕带下楼镜头）。
+   * 只在 section-card → act1 的切换上触发，避免覆盖存档续玩与 QA 定点。
+   */
+  const prevStoryPhaseRef = useRef<string | null>(null);
+  useEffect(() => {
+    const prev = prevStoryPhaseRef.current;
+    prevStoryPhaseRef.current = story.phase;
+    if (story.phase !== 'act1' || prev !== 'section-card') return;
+    applyActSpawn(story.act, true);
+  }, [story.phase, story.act, applyActSpawn]);
 
   const handleStartSimulation = useCallback(() => {
     if (!sceneReadyRef.current) return;
@@ -362,24 +443,14 @@ export default function App() {
     elapsedRef.current = 0;
     apartmentDoorOpenRef.current = false;
     apartmentDoorCloseAtRef.current = null;
-    cameraSnapRequestedRef.current = false;
     apartmentDoorPromptRef.current = null;
     envHandlesRef.current?.setApartmentDoorOpen(false);
     setApartmentDoorPrompt(null);
 
-    const point = getActPoints(storyRef.current.act)[0];
-    const stand = point.approach ?? { x: point.x - 1.2, z: point.z + 3.6 };
-    const safe = resolvePlayerCollision(stand.x, stand.z, 0.55);
-    freshPlayer.x = safe.x;
-    freshPlayer.z = safe.z;
-    freshPlayer.y = siteGroundHeight(safe.x, safe.z);
-    freshPlayer.yaw = Math.atan2(-(point.x - safe.x), -(point.z - safe.z));
-    freshPlayer.pitch = 0.02;
-
-    const doorOpen = Boolean(point.approach?.doorOpen);
-    apartmentDoorOpenRef.current = doorOpen;
+    // 重玩本幕：直接站在该幕出生点，统一面朝西方，不再播放入场镜头。
+    applyActSpawn(storyRef.current.act, false);
+    apartmentDoorOpenRef.current = false;
     apartmentDoorCloseAtRef.current = null;
-    envHandlesRef.current?.setApartmentDoorOpen(doorOpen);
 
     charControllerRef.current?.setFirstPersonMode(false);
     charControllerRef.current?.setFlashlightEnabled(false);
@@ -393,7 +464,7 @@ export default function App() {
     setGameState('playing');
     setActiveModal(null);
     updateBannerMessage(MESSAGES.initialBanner);
-  }, [updateBannerMessage]);
+  }, [applyActSpawn, updateBannerMessage]);
 
   const handleToggleRunWalk = useCallback(() => {
     const p = playerRef.current;
@@ -610,6 +681,8 @@ export default function App() {
       apartmentDoorOpenRef,
       apartmentDoorCloseAtRef,
       cameraSnapRequestedRef,
+      cutsceneRef,
+      onCutsceneEnd: handleCutsceneEnd,
       dispatchStory,
       setActiveModal,
       setIsMuted,
@@ -698,7 +771,7 @@ export default function App() {
         />
       )}
 
-      {gameState === 'playing' && (
+      {gameState === 'playing' && !cutscene && (
         <HudOverlay
           story={story}
           nearbyActPointId={nearbyActPointId}
@@ -719,7 +792,15 @@ export default function App() {
         />
       )}
 
-      {pointerLockHintVisible && <PointerLockHint />}
+      {cutscene && (
+        <CutsceneOverlay
+          caption={cutscene.caption}
+          subCaption={cutscene.subCaption}
+          onSkip={handleSkipCutscene}
+        />
+      )}
+
+      {pointerLockHintVisible && !cutscene && <PointerLockHint />}
 
       <ModalHost
         activeModal={activeModal}

@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  ACT_BRIEFING_TRIGGERS,
   ACT_DOSSIERS,
   ACT_SECTION_CARDS,
   ACT_TASK_CARDS,
@@ -87,6 +88,16 @@ test('HUD and banner copy never names an inspection tool', () => {
     }))
     .filter((entry) => entry.hints.length > 0);
   assert.deepEqual(violations, []);
+});
+
+test('每个排队播放的现场对话 id 都有对应文案', () => {
+  const missing: string[] = [];
+  for (const [act, trigger] of Object.entries(ACT_BRIEFING_TRIGGERS)) {
+    for (const id of trigger.lines) {
+      if (!ACT1_LINES[id]) missing.push(`第${act}幕 ${id}`);
+    }
+  }
+  assert.deepEqual(missing, [], '缺少文案会导致聊天播完后遮罩无法关闭');
 });
 
 test('the audit catches a planted hint, so the guard is live', () => {

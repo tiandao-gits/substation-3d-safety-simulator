@@ -80,6 +80,11 @@ export interface StoryState {
 export const PASS_SCORE_THRESHOLD = 80;
 /** 结算时每项未闭环隐患的扣分，使事故结局必然低于及格线。 */
 export const UNHANDLED_HAZARD_PENALTY = 25;
+/**
+ * 序章选择"能晚上补的先补，补不了的当场停"（pro_policy=defer）的起手扣分。
+ * 把整改留到夜间等于让风险多存在半天，评分上必须体现，否则这个选项没有代价。
+ */
+export const PROLOGUE_DEFER_PENALTY = 5;
 
 /** 终局评分：累计总分减去未闭环隐患扣分。 */
 export function settlementScore(
@@ -197,12 +202,20 @@ function policyFromVn(vn: VnState): ProPolicy | null {
 }
 
 function enterSectionCard(state: StoryState, vn: VnState): StoryState {
+  const policy = policyFromVn(vn);
+  // 序章选"能晚上补的先补"= 把整改风险留到夜里，起手先扣 5 分。
+  // 只在这一处结算，后续 startAct / 重试本幕都不会重复扣。
+  const totalScore =
+    policy === 'defer'
+      ? Math.max(0, state.totalScore - PROLOGUE_DEFER_PENALTY)
+      : state.totalScore;
   return {
     ...state,
     phase: 'section-card',
     act: 1,
     vn,
-    policy: policyFromVn(vn),
+    policy,
+    totalScore,
   };
 }
 
@@ -218,6 +231,17 @@ function withAct(state: StoryState, act1: Act1State, message: string | null): St
 /** 幕间只继承总分：重走本幕不设分数上限，失败幕的扣分不会进入总分。 */
 function startAct(state: StoryState, act: ActNo): StoryState {
   const fresh = { ...createAct1State(state.seed, act), score: state.totalScore };
+  // 分数已在序章收口时扣过，这里只补一条可追溯的扣分明细（结局复盘会用到）。
+  if (act === 1 && state.policy === 'defer') {
+    fresh.deductions = [
+      ...fresh.deductions,
+      {
+        id: 'prologue-defer',
+        label: '序章采纳"能晚上补的先补"，整改风险留到夜间',
+        points: PROLOGUE_DEFER_PENALTY,
+      },
+    ];
+  }
   return {
     ...state,
     act,

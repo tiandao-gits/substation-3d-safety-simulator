@@ -48,9 +48,22 @@ import {
 import type { SubstationSceneInstance } from './sceneSetup';
 import { soundEngine } from './sound';
 import type { StoryAction, StoryState } from './storySession';
+import {
+  sampleCutscene,
+  type CutsceneFrame,
+  type CutsceneScript,
+} from './openingCutscene';
 
 /** 越线触电后全屏晃动的时长，结束后切入失败黑屏。 */
 const ELECTROCUTION_SECONDS = 3;
+
+/** 开场过场：由 App 在幕间切场时写入，runtime 播完自动清空。 */
+export interface CutsceneState {
+  script: CutsceneScript;
+  startedAt: number;
+  /** 玩家按跳过时置 true：下一帧直接跳到结尾帧并收尾。 */
+  skipRequested: boolean;
+}
 
 export interface StartSimulationRuntimeOptions {
   container: HTMLElement;
@@ -69,6 +82,9 @@ export interface StartSimulationRuntimeOptions {
   apartmentDoorOpenRef: MutableRefObject<boolean>;
   apartmentDoorCloseAtRef: MutableRefObject<number | null>;
   cameraSnapRequestedRef: MutableRefObject<boolean>;
+  cutsceneRef: MutableRefObject<CutsceneState | null>;
+  /** 过场播完（或跳过）时通知 UI 收起黑边。 */
+  onCutsceneEnd?: () => void;
   dispatchStory: Dispatch<StoryAction>;
   setActiveModal: Dispatch<SetStateAction<ActiveModal>>;
   setIsMuted: Dispatch<SetStateAction<boolean>>;
@@ -105,6 +121,8 @@ export function startSimulationRuntime({
   apartmentDoorOpenRef,
   apartmentDoorCloseAtRef,
   cameraSnapRequestedRef,
+  cutsceneRef,
+  onCutsceneEnd,
   dispatchStory,
   setActiveModal,
   setIsMuted,
@@ -131,6 +149,7 @@ export function startSimulationRuntime({
     safetyLines,
     smoothCamPos,
     smoothLookAt,
+    readiness,
   } = sceneInstance;
 
   const keysPressed = new Set<string>();
@@ -152,6 +171,10 @@ export function startSimulationRuntime({
   let shockStartedAt: number | null = null;
   let shockZoneLabel: string | null = null;
   let shockReported = false;
+  /** 过场镜号：变化时硬切（不做插值），避免机位穿过墙体。 */
+  let cutsceneShotIndex = -1;
+  /** 游戏默认机位 FOV 由 sceneSetup 设定，过场结束后恢复。 */
+  const DEFAULT_CAMERA_FOV = camera.fov;
 
   const onKeyDown = (e: KeyboardEvent) => {
     if (
@@ -183,6 +206,11 @@ export function startSimulationRuntime({
       code !== 'KeyP' &&
       code !== 'KeyH'
     ) {
+      e.preventDefault();
+      return;
+    }
+    // 开场过场期间同样锁住操作（跳过由过场 UI 自己处理），避免边走边触发交互。
+    if (cutsceneRef.current) {
       e.preventDefault();
       return;
     }
@@ -341,7 +369,7 @@ export function startSimulationRuntime({
     camera.aspect = w / h;
     camera.updateProjectionMatrix();
     renderer.setSize(w, h);
-    renderer.render(scene, camera);
+    if (readiness.renderEnabled) renderer.render(scene, camera);
   };
 
   window.addEventListener('keydown', onKeyDown);
@@ -438,6 +466,25 @@ export function startSimulationRuntime({
       if (shocked) {
         moveForward = 0;
         moveRight = 0;
+      }
+
+      // 开场过场：这一帧的人物位姿、机位与门开度都从时间轴采样一次，后面两处共用。
+      let cutsceneFrame: CutsceneFrame | null = null;
+      const activeCutscene = cutsceneRef.current;
+      if (activeCutscene) {
+        const clock = activeCutscene.skipRequested
+          ? activeCutscene.script.duration
+          : (now - activeCutscene.startedAt) / 1000;
+        cutsceneFrame = sampleCutscene(activeCutscene.script, clock);
+        if (cutsceneFrame.done) {
+          cutsceneRef.current = null;
+          p.yaw = activeCutscene.script.endYaw;
+          charController.root.rotation.y = activeCutscene.script.endYaw;
+          charController.setMotionState('Idle', 1);
+          envHandles.setStairDoorOpen(0);
+          cameraSnapRequestedRef.current = true;
+          onCutsceneEnd?.();
+        }
       }
 
       if (p.perspective === 'drone') {
@@ -624,7 +671,34 @@ export function startSimulationRuntime({
             : nextMotion === 'Run'
               ? Math.max(0.85, horizSpeed / 5.8)
               : 1.0;
-        charController.setMotionState(nextMotion, animSpeed);
+        // 开场过场期间不要先切 Idle 再切 Walk：那样每帧都会 reset，
+        // 动画永远停在第 0 帧，人物会摆着站姿滑行。
+        if (!cutsceneFrame) {
+          charController.setMotionState(nextMotion, animSpeed);
+        }
+
+        // 开场过场：位置、朝向、门开度全部由时间轴接管，按键位移在此期间不生效。
+        if (cutsceneFrame) {
+          p.x = cutsceneFrame.x;
+          p.z = cutsceneFrame.z;
+          p.y = cutsceneFrame.y;
+          p.vx = 0;
+          p.vz = 0;
+          p.vy = 0;
+          p.yaw = cutsceneFrame.yaw;
+          p.isGrounded = true;
+          p.perspective = 'third-person';
+          p.motionState = cutsceneFrame.moving ? 'Walk' : 'Idle';
+          charController.root.rotation.y = cutsceneFrame.yaw;
+          // 按实际移速配步频：默认 Walk 循环约 1.5 m/s，避免脚底打滑。
+          charController.setMotionState(
+            cutsceneFrame.moving ? 'Walk' : 'Idle',
+            cutsceneFrame.moving
+              ? Math.max(0.8, Math.min(1.9, cutsceneFrame.speed / 1.5))
+              : 1
+          );
+          envHandles.setStairDoorOpen(cutsceneFrame.doorOpen);
+        }
 
         charController.root.position.set(p.x, p.y, p.z);
         charController.root.rotation.z = shocked
@@ -753,7 +827,35 @@ export function startSimulationRuntime({
           );
           desiredCamPos.set(clipped.x, clipped.y, clipped.z);
         }
+      } else if (cutsceneFrame && cutsceneRef.current) {
+        // 开场过场：机位直接取时间轴的结果，镜号变化时硬切（不做阻尼插值，
+        // 否则相机会从室外一路"飘"进楼梯间，直接穿过墙体）。
+        const frame = cutsceneFrame;
+        desiredCamPos.set(
+          frame.cameraPosition.x,
+          frame.cameraPosition.y,
+          frame.cameraPosition.z
+        );
+        desiredLookAt.set(
+          frame.cameraTarget.x,
+          frame.cameraTarget.y,
+          frame.cameraTarget.z
+        );
+        if (frame.shotIndex !== cutsceneShotIndex) {
+          cutsceneShotIndex = frame.shotIndex;
+          cameraSnapRequestedRef.current = true;
+        }
+        if (Math.abs(camera.fov - frame.fov) > 0.01) {
+          camera.fov = frame.fov;
+          camera.updateProjectionMatrix();
+        }
       } else {
+        // 过场收尾：机位交还第三人称，FOV 恢复默认，镜号记录清零。
+        cutsceneShotIndex = -1;
+        if (Math.abs(camera.fov - DEFAULT_CAMERA_FOV) > 0.01) {
+          camera.fov = DEFAULT_CAMERA_FOV;
+          camera.updateProjectionMatrix();
+        }
         const cameraDistance =
           insideApartment && p.perspective === 'third-person'
             ? Math.min(thirdPersonDistRef.current, 2.0)
@@ -860,7 +962,9 @@ export function startSimulationRuntime({
     }
 
     envHandles.updateApartmentDoor(dt);
-    renderer.render(scene, camera);
+    if (readiness.renderEnabled) {
+      renderer.render(scene, camera);
+    }
 
     if (isSoftwareGl) {
       afterDraw(tick);

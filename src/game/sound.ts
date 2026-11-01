@@ -10,8 +10,8 @@ class SubstationAudioEngine {
   private bgmKey: BgmKey | null = null;
   private bgmWanted: BgmKey | null = null;
   private bgmUnlockArmed = false;
-  /** 游戏默认静音，由设置面板 / HUD 声音按钮开启。 */
-  public muted = true;
+  /** 游戏默认开启声音，玩家可在设置面板 / HUD 声音按钮随时静音。 */
+  public muted = false;
 
   private ensureContext(): AudioContext | null {
     if (this.muted || typeof window === 'undefined') return null;

@@ -56,26 +56,14 @@ test('only the current act markers are visible', () => {
 test('variant props only appear for their own seed variant', () => {
   const props = createAct1StoryProps();
   const oil = props.group.getObjectByName('prop-oil-stain') as THREE.Mesh;
-  const hvHotspot = props.group.getObjectByName('prop-hv10kv-hotspot') as THREE.Mesh;
-  const bayHotspot = props.group.getObjectByName('prop-bay-hotspot') as THREE.Mesh;
   const wallHollow = props.group.getObjectByName('prop-wall-hollow') as THREE.Mesh;
   const boxFault = props.group.getObjectByName('prop-box-fault') as THREE.Mesh;
   const aisleLaser = props.group.getObjectByName('prop-aisle-laser') as THREE.Mesh;
   const pitLaser = props.group.getObjectByName('prop-pit-laser') as THREE.Mesh;
-  assert.ok(oil && hvHotspot && bayHotspot && wallHollow && boxFault && aisleLaser && pitLaser);
+  assert.ok(oil && wallHollow && boxFault && aisleLaser && pitLaser);
 
   props.update(null, new Set(), 'A', true, 0, 1);
-  assert.equal(hvHotspot.visible, false);
-  assert.equal(bayHotspot.visible, false);
   assert.equal(aisleLaser.visible, true);
-
-  props.update(null, new Set(), 'B', true, 0, 1);
-  assert.equal(hvHotspot.visible, false);
-  assert.equal(bayHotspot.visible, true);
-
-  props.update(null, new Set(), 'C', true, 0, 1);
-  assert.equal(hvHotspot.visible, true);
-  assert.equal(bayHotspot.visible, false);
 
   props.update(null, new Set(), 'A', true, 0, 2);
   assert.equal(oil.visible, false);
@@ -95,6 +83,26 @@ test('variant props only appear for their own seed variant', () => {
 
   props.update(null, new Set(['a3-box']), 'A', true, 0, 3);
   assert.equal(boxFault.visible, false);
+  props.dispose();
+});
+
+test('过热巡检点不放置任何可被看穿的故障标记', () => {
+  const props = createAct1StoryProps();
+  // 过热属于"要考玩家发现"的缺陷：场景里不能有只出现在故障点上的热斑/红点，
+  // 否则玩家不测温就能直接看出哪个点有问题。
+  for (const variant of ['A', 'B', 'C'] as const) {
+    props.update(null, new Set(), variant, true, 0, 1);
+    assert.equal(
+      props.group.getObjectByName('prop-hv10kv-hotspot'),
+      undefined,
+      `variant ${variant} 不应生成 10kV 热斑`
+    );
+    assert.equal(
+      props.group.getObjectByName('prop-bay-hotspot'),
+      undefined,
+      `variant ${variant} 不应生成 F02 间隔热斑`
+    );
+  }
   props.dispose();
 });
 

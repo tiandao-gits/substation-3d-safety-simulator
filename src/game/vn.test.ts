@@ -8,6 +8,7 @@ import {
   currentChoice,
   currentLine,
   isLineFullyRevealed,
+  sceneCastMembers,
   setVnAuto,
   skipVn,
   tickVn,
@@ -91,3 +92,69 @@ test('history is capped at 30 entries and auto/fast are toggles', () => {
   s = setVnAuto(s, true);
   assert.equal(s.auto, true);
 });
+
+test('立绘阵容是本场固定名单，从第一帧全员在场', () => {
+  const castScene: VnScene = {
+    id: 'cast',
+    bg: 'bg',
+    cast: [
+      { charId: 'wang', pose: 'normal', slot: 'left' },
+      { charId: 'chen', pose: 'normal', slot: 'center' },
+      { charId: 'zhao', pose: 'normal', slot: 'right' },
+    ],
+    lines: [
+      { id: 'C1', speakerId: 'chen', text: '先布置任务。' },
+      { id: 'C2', speakerId: 'wang', text: '北区在回填。' },
+      { id: 'C3', speakerId: 'zhao', text: '我两头跑。' },
+    ],
+  };
+  // 第一行只轮到陈立群说话，但三个槽位都要有人 —— 没开口的人靠隐退态区分。
+  let s = createVnState(castScene);
+  assert.deepEqual(
+    sceneCastMembers(castScene, currentLine(s, castScene)?.speakerId ?? null).map(
+      (m) => m.charId
+    ),
+    ['wang', 'chen', 'zhao']
+  );
+
+  s = advanceVn(advanceVn(s, castScene), castScene);
+  assert.equal(currentLine(s, castScene)?.speakerId, 'wang');
+  assert.deepEqual(
+    sceneCastMembers(castScene, currentLine(s, castScene)?.speakerId ?? null).map(
+      (m) => m.charId
+    ),
+    ['wang', 'chen', 'zhao']
+  );
+
+  // 没有 cast 的场景退化为单人构图，只画当前说话人。
+  const soloScene: VnScene = {
+    id: 'solo',
+    bg: 'bg',
+    lines: [{ id: 'S1', speakerId: 'chen', text: '记录呢？' }],
+  };
+  assert.deepEqual(
+    sceneCastMembers(soloScene, 'chen').map((m) => m.charId),
+    ['chen']
+  );
+  assert.deepEqual(sceneCastMembers(soloScene, null), []);
+
+  // 名单外的角色（电话里的周敏、第一人称陆川）不占槽位。
+  const phoneScene: VnScene = {
+    id: 'phone',
+    bg: 'bg',
+    cast: [{ charId: 'chen', pose: 'normal', slot: 'center' }],
+    lines: [
+      { id: 'P1', speakerId: 'chen', text: '记录呢？' },
+      { id: 'P2', speakerId: 'zhou', channel: 'phone', text: '我补不了。' },
+    ],
+  };
+  const p = advanceVn(advanceVn(createVnState(phoneScene), phoneScene), phoneScene);
+  assert.equal(currentLine(p, phoneScene)?.speakerId, 'zhou');
+  assert.deepEqual(
+    sceneCastMembers(phoneScene, currentLine(p, phoneScene)?.speakerId ?? null).map(
+      (m) => m.charId
+    ),
+    ['chen']
+  );
+});
+

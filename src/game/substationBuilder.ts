@@ -5,6 +5,7 @@ import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader.js';
 import type { SubstationTextures } from './textures';
 import { SUBSTATION_OBSTACLES, siteGroundHeight, type RenderDetailMode } from './rules';
 import { MESSAGES } from '../config/gameText';
+import { createStairDoorRig, type StairDoorRig } from './stairDoorRig';
 import {
   createApartmentDoorView,
   type ApartmentDoorView,
@@ -124,6 +125,7 @@ export interface SubstationSceneHandles {
   setRenderDetailMode: (mode: RenderDetailMode) => void;
   setActCharacterVisibility: (act: 1 | 2 | 3) => void;
   setApartmentDoorOpen: (open: boolean) => void;
+  setStairDoorOpen: (open01: number) => void;
   updateApartmentDoor: (dt: number) => void;
   loadBlenderPropAsset: (file: File, targetPos: { x: number; z: number }) => Promise<string>;
   /**
@@ -172,6 +174,23 @@ export function buildSubstationEnvironment(
   customPropsGroup.name = 'ImportedBlenderProps';
   root.add(customPropsGroup);
 
+  /**
+   * 公寓楼梯间的玻璃门：门扇直接从 GLB 里切出来（见 stairDoorRig.ts），
+   * 不额外补门 —— 模型本来就有这扇门，补一扇必然穿帮。
+   * 这里只保留铰链开度状态；铰链本体在模型加载完成后才创建。
+   */
+  let stairDoorRigs: StairDoorRig[] = [];
+  let stairDoorOpen = 0;
+  const applyStairDoor = () => {
+    for (const rig of stairDoorRigs) rig.setOpen(stairDoorOpen);
+  };
+  // GLB 的楼梯间只有自发光灯罩、没有实际光源，开场镜头里楼梯与人物都是黑的；
+  // 补一盏暖光把楼梯井照亮（只补光，不改任何几何）。
+  const stairLight = new THREE.PointLight(0xffe3b8, 2.2, 9, 2);
+  stairLight.name = 'STAIR_LIGHT';
+  stairLight.position.set(33.0, 2.5, -19.8);
+  customPropsGroup.add(stairLight);
+
   const clayMaterial = new THREE.MeshStandardMaterial({
     color: 0xc7cdd2,
     roughness: 0.86,
@@ -181,15 +200,51 @@ export function buildSubstationEnvironment(
   let currentAct: 1 | 2 | 3 = 1;
   const act2CrewNodes: THREE.Object3D[] = [];
   const act3UnsafeNodes: THREE.Object3D[] = [];
+  /** 检修班组在第二幕（班前会列队）的原始位姿，切回第二幕时复位。 */
+  const crewHome = new Map<
+    THREE.Object3D,
+    { x: number; y: number; z: number; rotY: number }
+  >();
   let apartmentDoorView: ApartmentDoorView | null = null;
   let apartmentDoorOpenRequested = false;
   let loadedOriginal: THREE.Object3D | null = null;
 
+  /**
+   * 第三幕岗位：班组不随幕次撤场，只是从集合列队转到 1# 主变本体东侧作业面继续干活。
+   * 1# 主变 AABB 为 x −31.09…−25.63 / z 15.22…22.39，班组站在本体东侧约 1 m 的检修通道上。
+   */
+  const ACT3_CREW_POSTS: Array<{ x: number; z: number }> = [
+    { x: -25.3, z: 16.9 },
+    { x: -25.25, z: 19.6 },
+    { x: -24.45, z: 18.3 },
+    { x: -24.5, z: 20.9 },
+  ];
+  const ACT3_MANAGER_POST = { x: -23.4, z: 19.3 };
+
   const applyActCharacterVisibility = () => {
-    const showAct2Crew = currentAct === 2;
+    // 第三幕是下午的施工区检查，上午的检修班组仍在 1# 主变上作业，不能凭空消失。
+    const showAct2Crew = currentAct === 2 || currentAct === 3;
     const showAct3Unsafe = currentAct === 3;
+    let workerIndex = 0;
     for (const node of act2CrewNodes) {
       node.visible = showAct2Crew;
+      const home = crewHome.get(node);
+      if (!home) continue;
+      if (currentAct === 3) {
+        const post =
+          node.name === 'MEMBER_02'
+            ? ACT3_MANAGER_POST
+            : ACT3_CREW_POSTS[workerIndex++ % ACT3_CREW_POSTS.length];
+        // 只挪岗位，不强行统一朝向：各成员模型基准朝向不同，硬套同一个 yaw
+        // 会出现有人背对作业面的情况；工人整体转 180° 面向主变本体，班组长保持监工朝向。
+        node.position.set(post.x, home.y, post.z);
+        if (node.name !== 'MEMBER_02') {
+          node.rotation.y = home.rotY + Math.PI;
+        }
+      } else {
+        node.position.set(home.x, home.y, home.z);
+        node.rotation.y = home.rotY;
+      }
     }
     for (const node of act3UnsafeNodes) {
       node.visible = showAct3Unsafe;
@@ -320,10 +375,17 @@ export function buildSubstationEnvironment(
 
     act2CrewNodes.length = 0;
     act3UnsafeNodes.length = 0;
+    crewHome.clear();
     for (const rootGroup of [original, clay]) {
       for (const child of rootGroup.children) {
         if (child.name.startsWith('MEMBER_01') || child.name === 'MEMBER_02') {
           act2CrewNodes.push(child);
+          crewHome.set(child, {
+            x: child.position.x,
+            y: child.position.y,
+            z: child.position.z,
+            rotY: child.rotation.y,
+          });
         } else if (child.name.startsWith('MEMBER_UNSAFE')) {
           act3UnsafeNodes.push(child);
         }
@@ -347,6 +409,16 @@ export function buildSubstationEnvironment(
     } catch (error) {
       console.error('[ApartmentDoor] 蓝门交互初始化失败:', error);
       apartmentDoorView = null;
+    }
+    // 玻璃门扇装配：原始材质与白模两份都要切，切换显示模式时门才不会"变回关着"。
+    try {
+      stairDoorRigs = [original, clay]
+        .map((host) => createStairDoorRig(host))
+        .filter((rig): rig is StairDoorRig => rig !== null);
+      applyStairDoor();
+    } catch (error) {
+      console.error('[StairDoor] 玻璃门装配失败:', error);
+      stairDoorRigs = [];
     }
     loadCallbacks?.onLoaded?.();
   };
@@ -391,6 +463,11 @@ export function buildSubstationEnvironment(
     setApartmentDoorOpen(open: boolean) {
       apartmentDoorOpenRequested = open;
       apartmentDoorView?.setOpen(open);
+    },
+    /** 0 = 关闭，1 = 全开；第三幕入场镜头里按人物位置开合。 */
+    setStairDoorOpen(open01: number) {
+      stairDoorOpen = Math.max(0, Math.min(1, open01));
+      applyStairDoor();
     },
     updateApartmentDoor(dt: number) {
       apartmentDoorView?.update(dt);

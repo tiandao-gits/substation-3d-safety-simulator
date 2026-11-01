@@ -14,7 +14,6 @@ import {
 } from '../config/dialogues';
 import {
   canCaptureDroneRecon,
-  countResolvedPoints,
   getAct1Point,
   getAct1VisualText,
   getAdmissibleReading,
@@ -26,6 +25,7 @@ import {
 import type { CaptureEvidenceResult } from '../game/evidence';
 import type { StorySettings } from '../game/save';
 import {
+  PROLOGUE_DEFER_PENALTY,
   sceneFor,
   settlementScoreForStory,
   type StoryAction,
@@ -221,14 +221,6 @@ export const StoryLayer = forwardRef<StoryLayerHandle, StoryLayerProps>(function
   const resolved =
     Boolean(point && story.act1) && isPointResolved(story.act1!, point!.id);
 
-  const completedPointsCount = useMemo(
-    () => (story.act1 ? countResolvedPoints(story.act1) : 0),
-    [story.act1]
-  );
-  const totalPointsCount = useMemo(
-    () => (story.act1 ? Object.keys(story.act1.points).length : 3),
-    [story.act1]
-  );
   const vnScene = story.vn ? sceneFor(story) : null;
 
   return (
@@ -268,6 +260,14 @@ export const StoryLayer = forwardRef<StoryLayerHandle, StoryLayerProps>(function
               <span className="text-slate-700">/</span>
               <span>{ACT_SECTION_CARDS[story.act].place}</span>
             </div>
+            {story.act === 1 && story.policy === 'defer' && (
+              <div className="mt-3 inline-flex items-center gap-2 rounded-sm border border-amber-400/60 bg-amber-500/10 px-3 py-1 font-mono text-xs tracking-[0.08em] text-amber-200">
+                <span>序章策略 · 能晚上补的先补</span>
+                <span className="font-bold text-amber-100">
+                  总分 −{PROLOGUE_DEFER_PENALTY}
+                </span>
+              </div>
+            )}
             <p className="mt-5 max-w-[620px] text-sm leading-7 text-slate-300">
               {ACT_TASK_CARDS[story.act].scope}
             </p>
@@ -337,8 +337,6 @@ export const StoryLayer = forwardRef<StoryLayerHandle, StoryLayerProps>(function
           readings={pointState?.readings ?? []}
           reviewChances={story.act1?.reviewChances ?? 0}
           message={story.message}
-          completedPointsCount={completedPointsCount}
-          totalPointsCount={totalPointsCount}
           onToolAction={(tool, actionId) => {
             if (actionId === 'invalid') {
               soundEngine.playHazardWarning();

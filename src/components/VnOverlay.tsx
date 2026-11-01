@@ -3,9 +3,11 @@ import {
   currentChoice,
   currentLine,
   isLineFullyRevealed,
+  sceneCastMembers,
   type VnChoice,
   type VnLine,
   type VnScene,
+  type VnSpriteSlot,
   type VnState,
 } from '../game/vn';
 import { SPEAKER_NAMES, VN_BACKGROUNDS, VN_CHARACTERS, VN_PROP_FRAMES } from '../config/vnAssets';
@@ -27,8 +29,14 @@ interface VnOverlayProps {
   onToggleAuto: () => void;
 }
 
-function TacticalCrosshair() {
-  return (
+/** 三个槽位固定尺寸占位：角色尚未登场时构图也不会跑位。 */
+const CAST_SLOT_CLASS: Record<VnSpriteSlot, string> = {
+  left: 'h-[75vh] w-[25vw] max-w-[320px] flex items-end justify-center',
+  center: 'h-[77vh] w-[26vw] max-w-[340px] flex items-end justify-center z-10',
+  right: 'h-[73vh] w-[25vw] max-w-[320px] flex items-end justify-center',
+};
+
+function TacticalCrosshair() {  return (
     <svg width="20" height="20" viewBox="0 0 20 20" className="text-amber-400/80" fill="none">
       <path d="M10 2 V5 M10 15 V18 M2 10 H5 M15 10 H18" stroke="currentColor" strokeWidth="1.5" />
       <circle cx="10" cy="10" r="4" stroke="currentColor" strokeWidth="1" />
@@ -301,11 +309,23 @@ export function VnOverlay({
     return () => window.removeEventListener('keydown', onKey, true);
   }, [activeChoice, choice, isZoomed, line, mockActive, onAdvance, onChoose, onSkip, onToggleFast, propClosed, scene, selectedChoiceIdx, state]);
 
+  /**
+   * 本场到场人员从第一帧就全部在场：cast 是固定名单，不按对话进度逐个放行。
+   * 没轮到说话的人不消失，只由 PortraitSlot 压暗、缩到 0.99、下沉 0 呈隐退态，
+   * 轮到谁谁点亮并前移 6px —— 让玩家一开始就看清这场对话有几个人。
+   * 名单外的角色（电话/无线电接入的声音、第一人称的陆川）没有立绘，不占槽位。
+   */
   const cast = useMemo(() => {
-    if (scene.cast && scene.cast.length > 0) return scene.cast;
-    if (!line) return [];
-    return [{ charId: line.speakerId, pose: 'normal' as const, slot: 'center' as const }];
-  }, [line, scene.cast]);
+    if (mockActive && !scene.cast?.length) {
+      return [{ charId: 'chen', pose: 'normal' as const, slot: 'center' as const }];
+    }
+    const roster = sceneCastMembers(scene, line?.speakerId ?? null);
+    if (scene.cast?.length) return roster;
+    // 无 cast 的场景只有说话人本人出场：没有立绘的角色（陆川/电话）不画剪影。
+    return roster.filter((member) =>
+      Boolean(VN_CHARACTERS[member.charId]?.portraits.normal)
+    );
+  }, [mockActive, scene, line?.speakerId]);
 
   // Determine active speaker
   const activeSpeakerId = mockActive ? 'chen' : line?.speakerId ?? (choice ? 'luchuan' : 'chen');
@@ -353,56 +373,23 @@ export function VnOverlay({
         <span className="text-slate-400">点击继续 / Space</span>
       </div>
 
-      {/* Cast Staging: Characters arranged across the scene */}
+      {/* Cast Staging: 三个槽位固定占位，本场到场人员从第一帧就全员在场 */}
       <div className="absolute inset-x-0 bottom-0 top-8 flex items-end justify-center pointer-events-none">
         <div className="w-full max-w-[1360px] h-full flex items-end justify-between px-10 pb-6">
-          {/* Left slot (Wang Zhen in orange vest / drawing) */}
-          {cast.map((member) =>
-            member.slot === 'left' ? (
-              <div
-                key={member.charId}
-                className="h-[75vh] w-[25vw] max-w-[320px] flex items-end justify-center"
-              >
-                <PortraitSlot
-                  charId={member.charId}
-                  dimmed={activeSpeakerId !== member.charId}
-                  speaking={activeSpeakerId === member.charId}
-                />
+          {(['left', 'center', 'right'] as const).map((slot) => {
+            const member = cast.find((item) => item.slot === slot);
+            return (
+              <div key={slot} className={CAST_SLOT_CLASS[slot]}>
+                {member ? (
+                  <PortraitSlot
+                    charId={member.charId}
+                    dimmed={activeSpeakerId !== member.charId}
+                    speaking={activeSpeakerId === member.charId}
+                  />
+                ) : null}
               </div>
-            ) : null
-          )}
-
-          {/* Center slot (Chen Liqun in dark suit / portfolio) */}
-          {cast.map((member) =>
-            member.slot === 'center' ? (
-              <div
-                key={member.charId}
-                className="h-[77vh] w-[26vw] max-w-[340px] flex items-end justify-center z-10"
-              >
-                <PortraitSlot
-                  charId={member.charId}
-                  dimmed={activeSpeakerId !== member.charId}
-                  speaking={activeSpeakerId === member.charId}
-                />
-              </div>
-            ) : null
-          )}
-
-          {/* Right slot (Zhao Zhiyuan in white helmet) */}
-          {cast.map((member) =>
-            member.slot === 'right' ? (
-              <div
-                key={member.charId}
-                className="h-[73vh] w-[25vw] max-w-[320px] flex items-end justify-center"
-              >
-                <PortraitSlot
-                  charId={member.charId}
-                  dimmed={activeSpeakerId !== member.charId}
-                  speaking={activeSpeakerId === member.charId}
-                />
-              </div>
-            ) : null
-          )}
+            );
+          })}
         </div>
       </div>
 
