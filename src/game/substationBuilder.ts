@@ -122,6 +122,7 @@ export interface SubstationSceneHandles {
   blockoutGroup: THREE.Group;
   customPropsGroup: THREE.Group;
   setRenderDetailMode: (mode: RenderDetailMode) => void;
+  setActCharacterVisibility: (act: 1 | 2 | 3) => void;
   setApartmentDoorOpen: (open: boolean) => void;
   updateApartmentDoor: (dt: number) => void;
   loadBlenderPropAsset: (file: File, targetPos: { x: number; z: number }) => Promise<string>;
@@ -177,9 +178,24 @@ export function buildSubstationEnvironment(
     metalness: 0.04,
   });
   let currentDetailMode: RenderDetailMode = 'detailed';
+  let currentAct: 1 | 2 | 3 = 1;
+  const act2CrewNodes: THREE.Object3D[] = [];
+  const act3UnsafeNodes: THREE.Object3D[] = [];
   let apartmentDoorView: ApartmentDoorView | null = null;
   let apartmentDoorOpenRequested = false;
   let loadedOriginal: THREE.Object3D | null = null;
+
+  const applyActCharacterVisibility = () => {
+    const showAct2Crew = currentAct === 2;
+    const showAct3Unsafe = currentAct === 3;
+    for (const node of act2CrewNodes) {
+      node.visible = showAct2Crew;
+    }
+    for (const node of act3UnsafeNodes) {
+      node.visible = showAct3Unsafe;
+    }
+  };
+
   // 墙外地形：外围地面 + 远景山脊 + 场外道路，消除「悬浮半空」感
   const externalTerrain = buildExternalTerrain();
   root.add(externalTerrain.group);
@@ -274,6 +290,22 @@ export function buildSubstationEnvironment(
             standard.color.setHex(tint);
             standard.needsUpdate = true;
           }
+          // 1# 主变旁（x≈-18.5, z≈17.4）的 MEMBER_02 为项目经理王振，将其服装（CLOTH_ORANGE）更换为黑色项目经理工装，保留法线与粗糙度褶皱细节。
+          if (standard?.name === 'CLOTH_ORANGE') {
+            standard.name = 'CLOTH_BLACK_MANAGER';
+            standard.map = null;
+            standard.color.setHex(0x181a1f);
+            standard.roughness = 0.72;
+            standard.metalness = 0.08;
+            standard.needsUpdate = true;
+          }
+          if (standard?.name === 'CLOTH_BLUE.003') {
+            standard.map = null;
+            standard.color.setHex(0x1d4ed8);
+            standard.roughness = 0.75;
+            standard.metalness = 0.06;
+            standard.needsUpdate = true;
+          }
         }
       }
     });
@@ -285,6 +317,19 @@ export function buildSubstationEnvironment(
         (child as THREE.Mesh).material = clayMaterial;
       }
     });
+
+    act2CrewNodes.length = 0;
+    act3UnsafeNodes.length = 0;
+    for (const rootGroup of [original, clay]) {
+      for (const child of rootGroup.children) {
+        if (child.name.startsWith('MEMBER_01') || child.name === 'MEMBER_02') {
+          act2CrewNodes.push(child);
+        } else if (child.name.startsWith('MEMBER_UNSAFE')) {
+          act3UnsafeNodes.push(child);
+        }
+      }
+    }
+    applyActCharacterVisibility();
 
     detailedGroup.add(original);
     blockoutGroup.add(clay);
@@ -337,6 +382,11 @@ export function buildSubstationEnvironment(
       blockoutGroup.visible = mode === 'blockout';
       apartmentDoorView?.setDetailMode(mode);
       externalTerrain.setMode(mode);
+    },
+    setActCharacterVisibility(act: 1 | 2 | 3) {
+      if (currentAct === act) return;
+      currentAct = act;
+      applyActCharacterVisibility();
     },
     setApartmentDoorOpen(open: boolean) {
       apartmentDoorOpenRequested = open;

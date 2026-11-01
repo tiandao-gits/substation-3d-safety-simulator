@@ -113,6 +113,7 @@ export default function App() {
   const [apartmentDoorPrompt, setApartmentDoorPrompt] =
     useState<ApartmentDoorSide | null>(null);
   const nearbyActPointIdRef = useRef<Act1PointId | null>(null);
+  const activeWorkbenchPointIdRef = useRef<Act1PointId | null>(null);
   const apartmentDoorPromptRef = useRef<ApartmentDoorSide | null>(null);
   const apartmentDoorOpenRef = useRef(false);
   const apartmentDoorCloseAtRef = useRef<number | null>(null);
@@ -150,7 +151,10 @@ export default function App() {
       document.exitPointerLock?.();
     }
     const rig = charControllerRef.current;
-    if (rig) rig.root.visible = gameState !== 'title';
+    if (rig) {
+      rig.root.visible =
+        gameState !== 'title' && activeWorkbenchPointIdRef.current === null;
+    }
   }, [gameState]);
 
   useEffect(() => {
@@ -189,6 +193,18 @@ export default function App() {
     storyOverlayOpenRef.current = open;
     setStoryOverlayOpen(open);
   }, []);
+
+  const handleInspectPointChange = useCallback(
+    (pointId: Act1PointId | null) => {
+      activeWorkbenchPointIdRef.current = pointId;
+      const rig = charControllerRef.current;
+      if (rig) {
+        rig.root.visible =
+          gameStateRef.current !== 'title' && pointId === null;
+      }
+    },
+    []
+  );
 
   const handleChatChange = useCallback((active: boolean) => {
     setCinematicChatActive(active);
@@ -589,6 +605,7 @@ export default function App() {
       storyOverlayOpenRef,
       modalOpenRef,
       nearbyActPointIdRef,
+      activeWorkbenchPointIdRef,
       apartmentDoorPromptRef,
       apartmentDoorOpenRef,
       apartmentDoorCloseAtRef,
@@ -728,6 +745,7 @@ export default function App() {
           perspective={perspective}
           captureEvidence={handleCaptureEvidence}
           onOverlayChange={handleStoryOverlayChange}
+          onInspectPointChange={handleInspectPointChange}
           onChatChange={handleChatChange}
           onEnterDrone={handleEnterDroneForRecon}
           onExitDrone={handleExitDroneForRecon}

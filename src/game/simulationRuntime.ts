@@ -7,6 +7,7 @@ import {
   ACT1_REVIEW_CHANCES,
   countResolvedPoints,
   findNearestOpenAct1Point,
+  getAct1Point,
   getActPointIds,
   getActPoints,
   isPointResolved,
@@ -46,7 +47,7 @@ import {
 } from './rules';
 import type { SubstationSceneInstance } from './sceneSetup';
 import { soundEngine } from './sound';
-import type { StoryAction, StorySessionState } from './storySession';
+import type { StoryAction, StoryState } from './storySession';
 
 /** 越线触电后全屏晃动的时长，结束后切入失败黑屏。 */
 const ELECTROCUTION_SECONDS = 3;
@@ -59,10 +60,11 @@ export interface StartSimulationRuntimeOptions {
   detailModeRef: MutableRefObject<RenderDetailMode>;
   thirdPersonDistRef: MutableRefObject<number>;
   elapsedRef: MutableRefObject<number>;
-  storyRef: MutableRefObject<StorySessionState>;
+  storyRef: MutableRefObject<StoryState>;
   storyOverlayOpenRef: MutableRefObject<boolean>;
   modalOpenRef: MutableRefObject<boolean>;
   nearbyActPointIdRef: MutableRefObject<Act1PointId | null>;
+  activeWorkbenchPointIdRef?: MutableRefObject<Act1PointId | null>;
   apartmentDoorPromptRef: MutableRefObject<ApartmentDoorSide | null>;
   apartmentDoorOpenRef: MutableRefObject<boolean>;
   apartmentDoorCloseAtRef: MutableRefObject<number | null>;
@@ -98,6 +100,7 @@ export function startSimulationRuntime({
   storyOverlayOpenRef,
   modalOpenRef,
   nearbyActPointIdRef,
+  activeWorkbenchPointIdRef,
   apartmentDoorPromptRef,
   apartmentDoorOpenRef,
   apartmentDoorCloseAtRef,
@@ -650,17 +653,8 @@ export function startSimulationRuntime({
 
       const act1State = storyRef.current.act1;
       const storyAct1Active = storyRef.current.phase === 'act1';
-      const briefing =
-        act1State && act1State.act !== 1
-          ? ACT_BRIEFING_TRIGGERS[act1State.act]
-          : undefined;
-      if (
-        briefing &&
-        !act1State!.seenLines.includes(briefing.lines[0]) &&
-        Math.hypot(p.x - briefing.x, p.z - briefing.z) <= briefing.radius
-      ) {
-        dispatchStory({ type: 'queue-lines', lines: briefing.lines });
-      }
+      const currentActNo = act1State?.act ?? storyRef.current.act;
+      envHandles.setActCharacterVisibility(currentActNo);
       const nearAct = act1State
         ? findNearestOpenAct1Point(
             p.x,
@@ -682,6 +676,19 @@ export function startSimulationRuntime({
       if (nearbyActPointIdRef.current !== nextNearbyId) {
         nearbyActPointIdRef.current = nextNearbyId;
         setNearbyActPointId(nextNearbyId);
+      }
+
+      const briefing =
+        storyAct1Active && (currentActNo === 2 || currentActNo === 3)
+          ? ACT_BRIEFING_TRIGGERS[currentActNo]
+          : undefined;
+      if (
+        briefing &&
+        act1State &&
+        !briefing.lines.every((id) => act1State.seenLines.includes(id)) &&
+        Math.hypot(p.x - briefing.x, p.z - briefing.z) <= briefing.radius
+      ) {
+        dispatchStory({ type: 'queue-lines', lines: briefing.lines });
       }
 
       const nextDoorPrompt =
@@ -709,33 +716,64 @@ export function startSimulationRuntime({
         act1State?.variant ?? null,
         storyAct1Active,
         elapsedRef.current,
-        act1State?.act ?? 1
+        currentActNo
       );
-      safetyLines.update(
-        act1State?.act ?? storyRef.current.act,
-        storyAct1Active
-      );
+      safetyLines.update(currentActNo, storyAct1Active);
 
       const insideApartment = isInsideApartmentRoom(p.x, p.z);
-      const cameraDistance =
-        insideApartment && p.perspective === 'third-person'
-          ? Math.min(thirdPersonDistRef.current, 2.0)
-          : thirdPersonDistRef.current;
-      const rig = computeCameraRigTransform(p, cameraDistance);
-      desiredCamPos.set(rig.camX, rig.camY, rig.camZ);
-      desiredLookAt.set(rig.lookX, rig.lookY, rig.lookZ);
-      if (insideApartment && p.perspective === 'third-person') {
-        const clipped = constrainApartmentCameraPosition(
-          desiredCamPos.x,
-          desiredCamPos.y,
-          desiredCamPos.z
+      renderer.toneMappingExposure = insideApartment ? 0.62 : 0.86;
+      const focusPointId = activeWorkbenchPointIdRef?.current ?? null;
+      charController.root.visible = focusPointId === null;
+      if (focusPointId && p.perspective !== 'drone') {
+        const focusPoint = getAct1Point(focusPointId);
+        const dx = p.x - focusPoint.x;
+        const dz = p.z - focusPoint.z;
+        const horizDist = Math.hypot(dx, dz);
+        const ux = horizDist > 0.05 ? dx / horizDist : -Math.sin(p.yaw);
+        const uz = horizDist > 0.05 ? dz / horizDist : -Math.cos(p.yaw);
+        // 视线右向量 (forward x up)，将视线锚点略微向右偏移，使 3D 实景设备落在屏幕左半侧特写区。
+        const rx = uz;
+        const rz = -ux;
+        const camDist = insideApartment ? 1.85 : 2.35;
+        desiredCamPos.set(
+          focusPoint.x + ux * camDist + rx * 0.35,
+          Math.max(p.y + 1.42, focusPoint.focusY + 0.18),
+          focusPoint.z + uz * camDist + rz * 0.35
         );
-        desiredCamPos.set(clipped.x, clipped.y, clipped.z);
+        desiredLookAt.set(
+          focusPoint.x + rx * 0.48,
+          focusPoint.focusY,
+          focusPoint.z + rz * 0.48
+        );
+        if (insideApartment) {
+          const clipped = constrainApartmentCameraPosition(
+            desiredCamPos.x,
+            desiredCamPos.y,
+            desiredCamPos.z
+          );
+          desiredCamPos.set(clipped.x, clipped.y, clipped.z);
+        }
+      } else {
+        const cameraDistance =
+          insideApartment && p.perspective === 'third-person'
+            ? Math.min(thirdPersonDistRef.current, 2.0)
+            : thirdPersonDistRef.current;
+        const rig = computeCameraRigTransform(p, cameraDistance);
+        desiredCamPos.set(rig.camX, rig.camY, rig.camZ);
+        desiredLookAt.set(rig.lookX, rig.lookY, rig.lookZ);
+        if (insideApartment && p.perspective === 'third-person') {
+          const clipped = constrainApartmentCameraPosition(
+            desiredCamPos.x,
+            desiredCamPos.y,
+            desiredCamPos.z
+          );
+          desiredCamPos.set(clipped.x, clipped.y, clipped.z);
+        }
       }
 
       const snapCamera = cameraSnapRequestedRef.current;
       cameraSnapRequestedRef.current = false;
-      if (p.perspective === 'first-person') {
+      if (p.perspective === 'first-person' && !focusPointId) {
         camera.position.copy(desiredCamPos);
         camera.lookAt(desiredLookAt);
       } else {

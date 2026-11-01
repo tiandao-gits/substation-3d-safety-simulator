@@ -167,6 +167,172 @@ class SubstationAudioEngine {
     osc.stop(now + 0.19);
   }
 
+  /** 肉眼近观检查：轻柔的双频对焦确认音。 */
+  public playVisualInspect() {
+    const ctx = this.ensureContext();
+    if (!ctx) return;
+    const now = ctx.currentTime;
+    [660, 880].forEach((freq, idx) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(freq, now + idx * 0.055);
+      gain.gain.setValueAtTime(0.03, now + idx * 0.055);
+      gain.gain.exponentialRampToValueAtTime(0.0008, now + idx * 0.055 + 0.08);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(now + idx * 0.055);
+      osc.stop(now + idx * 0.055 + 0.09);
+    });
+  }
+
+  /** 红外测温仪：正常温升为清脆锁定音，发现过热缺陷时发出高频双促告警滴声。 */
+  public playThermalScan(isOverheated = false) {
+    const ctx = this.ensureContext();
+    if (!ctx) return;
+    const now = ctx.currentTime;
+    const tones = isOverheated ? [1480, 980, 1560] : [960, 1280];
+    tones.forEach((freq, idx) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = isOverheated ? 'square' : 'sine';
+      osc.frequency.setValueAtTime(freq, now + idx * 0.065);
+      gain.gain.setValueAtTime(isOverheated ? 0.045 : 0.032, now + idx * 0.065);
+      gain.gain.exponentialRampToValueAtTime(0.0008, now + idx * 0.065 + 0.06);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(now + idx * 0.065);
+      osc.stop(now + idx * 0.065 + 0.065);
+    });
+  }
+
+  /** 激光测距仪：高频脉冲发射与回波锁定滴声。 */
+  public playLaserMeasure() {
+    const ctx = this.ensureContext();
+    if (!ctx) return;
+    const now = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(1650, now);
+    osc.frequency.exponentialRampToValueAtTime(2350, now + 0.075);
+    gain.gain.setValueAtTime(0.035, now);
+    gain.gain.exponentialRampToValueAtTime(0.0008, now + 0.085);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start(now);
+    osc.stop(now + 0.09);
+  }
+
+  /**
+   * 空鼓锤敲击防火墙：
+   * - 密实墙面（isHollow=false）：短促高阻尼实心敲击声；
+   * - 空鼓墙面（isHollow=true）：带空腔共鸣尾音的“咚咚”空鼓声。
+   */
+  public playHollowHammerTap(isHollow: boolean) {
+    const ctx = this.ensureContext();
+    if (!ctx) return;
+    const now = ctx.currentTime;
+    const taps = [0, 0.14];
+    taps.forEach((offset) => {
+      const t = now + offset;
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      if (isHollow) {
+        osc.type = 'triangle';
+        osc.frequency.setValueAtTime(290, t);
+        osc.frequency.exponentialRampToValueAtTime(135, t + 0.11);
+        gain.gain.setValueAtTime(0.075, t);
+        gain.gain.exponentialRampToValueAtTime(0.001, t + 0.12);
+      } else {
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(195, t);
+        osc.frequency.exponentialRampToValueAtTime(75, t + 0.04);
+        gain.gain.setValueAtTime(0.055, t);
+        gain.gain.exponentialRampToValueAtTime(0.001, t + 0.045);
+      }
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(t);
+      osc.stop(t + (isHollow ? 0.13 : 0.05));
+    });
+  }
+
+  /** 漏电保护测试仪：模拟试验电流注入与拒动告警蜂鸣。 */
+  public playLeakageTest() {
+    const ctx = this.ensureContext();
+    if (!ctx) return;
+    const now = ctx.currentTime;
+    const buzz = ctx.createOscillator();
+    const gain = ctx.createGain();
+    buzz.type = 'sawtooth';
+    buzz.frequency.setValueAtTime(100, now);
+    buzz.frequency.setValueAtTime(820, now + 0.09);
+    gain.gain.setValueAtTime(0.04, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.22);
+    buzz.connect(gain);
+    gain.connect(ctx.destination);
+    buzz.start(now);
+    buzz.stop(now + 0.23);
+  }
+
+  /** 辅助工具音效（强光手电开关、力矩扳手咔哒、塞尺/卡尺量具、万用表蜂鸣）。 */
+  public playAuxiliaryTool(tool: string) {
+    const ctx = this.ensureContext();
+    if (!ctx) return;
+    const now = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    if (tool === 'torque') {
+      osc.type = 'square';
+      osc.frequency.setValueAtTime(420, now);
+      osc.frequency.setValueAtTime(680, now + 0.045);
+      gain.gain.setValueAtTime(0.05, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.095);
+    } else if (tool === 'flashlight') {
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(1100, now);
+      osc.frequency.exponentialRampToValueAtTime(480, now + 0.035);
+      gain.gain.setValueAtTime(0.045, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.04);
+    } else if (tool === 'multimeter') {
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(1920, now);
+      gain.gain.setValueAtTime(0.038, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.11);
+    } else {
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(740, now);
+      osc.frequency.exponentialRampToValueAtTime(1120, now + 0.055);
+      gain.gain.setValueAtTime(0.035, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.065);
+    }
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start(now);
+    osc.stop(now + 0.12);
+  }
+
+  /** 现场取证相机快门声。 */
+  public playCameraShutter() {
+    const ctx = this.ensureContext();
+    if (!ctx) return;
+    const now = ctx.currentTime;
+    [1400, 620].forEach((freq, idx) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(freq, now + idx * 0.035);
+      osc.frequency.exponentialRampToValueAtTime(180, now + idx * 0.035 + 0.03);
+      gain.gain.setValueAtTime(0.055, now + idx * 0.035);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + idx * 0.035 + 0.035);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(now + idx * 0.035);
+      osc.stop(now + idx * 0.035 + 0.04);
+    });
+  }
+
   /** 越过带电警戒线：工频电流嗡鸣 + 电弧爆裂，收尾一记低频倒地冲击。 */
   public playElectricShock(durationSeconds = 2.6) {
     const ctx = this.ensureContext();

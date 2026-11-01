@@ -56,16 +56,45 @@ test('only the current act markers are visible', () => {
 test('variant props only appear for their own seed variant', () => {
   const props = createAct1StoryProps();
   const oil = props.group.getObjectByName('prop-oil-stain') as THREE.Mesh;
-  assert.ok(oil);
+  const hvHotspot = props.group.getObjectByName('prop-hv10kv-hotspot') as THREE.Mesh;
+  const bayHotspot = props.group.getObjectByName('prop-bay-hotspot') as THREE.Mesh;
+  const wallHollow = props.group.getObjectByName('prop-wall-hollow') as THREE.Mesh;
+  const boxFault = props.group.getObjectByName('prop-box-fault') as THREE.Mesh;
+  const aisleLaser = props.group.getObjectByName('prop-aisle-laser') as THREE.Mesh;
+  const pitLaser = props.group.getObjectByName('prop-pit-laser') as THREE.Mesh;
+  assert.ok(oil && hvHotspot && bayHotspot && wallHollow && boxFault && aisleLaser && pitLaser);
+
+  props.update(null, new Set(), 'A', true, 0, 1);
+  assert.equal(hvHotspot.visible, false);
+  assert.equal(bayHotspot.visible, false);
+  assert.equal(aisleLaser.visible, true);
+
+  props.update(null, new Set(), 'B', true, 0, 1);
+  assert.equal(hvHotspot.visible, false);
+  assert.equal(bayHotspot.visible, true);
+
+  props.update(null, new Set(), 'C', true, 0, 1);
+  assert.equal(hvHotspot.visible, true);
+  assert.equal(bayHotspot.visible, false);
 
   props.update(null, new Set(), 'A', true, 0, 2);
   assert.equal(oil.visible, false);
+  assert.equal(wallHollow.visible, false);
 
   props.update(null, new Set(), 'B', true, 0, 2);
   assert.equal(oil.visible, false);
+  assert.equal(wallHollow.visible, true);
 
   props.update(null, new Set(), 'C', true, 0, 2);
   assert.equal(oil.visible, true);
+  assert.equal(wallHollow.visible, false);
+
+  props.update(null, new Set(), 'A', true, 0, 3);
+  assert.equal(pitLaser.visible, true);
+  assert.equal(boxFault.visible, true);
+
+  props.update(null, new Set(['a3-box']), 'A', true, 0, 3);
+  assert.equal(boxFault.visible, false);
   props.dispose();
 });
 

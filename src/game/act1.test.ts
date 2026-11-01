@@ -423,3 +423,84 @@ test('personnel protection needs a drone capture before disposition', () => {
   const ok = setAct1Disposition(s, 'a3-hardhat', 'P0');
   assert.equal(ok.ok, true);
 });
+
+test('Phase 2 专项工具核验无扣分且不改变标准判级', () => {
+  // Act 1: flashlight on hv-10kv before primary ir-3
+  let s1 = createAct1State(seedFor('C', 1), 1);
+  const flash1 = applyAct1Action(s1, 'hv-10kv', 'flashlight', 'cabinet-light');
+  assert.equal(flash1.result.penalty, 0);
+  assert.equal(flash1.result.kind, 'clue');
+  s1 = detectAll(flash1.state);
+  assert.equal(standardGradeFor(s1, 'hv-10kv'), 'P2');
+
+  // Act 2: torque & caliper on a2-crew, feeler on a2-wall, flashlight on a2-oil
+  let s2 = createAct1State(seedFor('C', 2), 2);
+  const torqueRes = applyAct1Action(s2, 'a2-crew', 'torque', 'ground-torque');
+  assert.equal(torqueRes.result.penalty, 0);
+  assert.equal(torqueRes.result.kind, 'clue');
+  const caliperRes = applyAct1Action(torqueRes.state, 'a2-crew', 'caliper', 'ground-caliper');
+  assert.equal(caliperRes.result.penalty, 0);
+  assert.equal(caliperRes.result.kind, 'clue');
+  const feelerRes = applyAct1Action(caliperRes.state, 'a2-wall', 'feeler', 'wall-crack');
+  assert.equal(feelerRes.result.penalty, 0);
+  assert.equal(feelerRes.result.kind, 'clue');
+  const oilLightRes = applyAct1Action(feelerRes.state, 'a2-oil', 'flashlight', 'oil-light');
+  assert.equal(oilLightRes.result.penalty, 0);
+  assert.equal(oilLightRes.result.kind, 'clue');
+  s2 = detectAll(oilLightRes.state);
+  assert.equal(standardGradeFor(s2, 'a2-oil'), 'P2');
+
+  // Act 3: multimeter on a3-box before leakage-test
+  let s3 = createAct1State(seedFor('A', 3), 3);
+  const multiRes = applyAct1Action(s3, 'a3-box', 'multimeter', 'box-voltage');
+  assert.equal(multiRes.result.penalty, 0);
+  assert.equal(multiRes.result.kind, 'clue');
+  s3 = detectAll(multiRes.state);
+  assert.equal(standardGradeFor(s3, 'a3-box'), 'P3');
+});
+
+test('单巡检点闭环不弹剧情聊天，仅在第一幕、第二幕全点位闭环时入队幕末聊天，第三幕不入队', () => {
+  // Act 1: 3 points
+  let s1 = detectAll(createAct1State(seedFor('B', 1), 1));
+  assert.deepEqual(s1.pendingLines, [], '检测动作不再入队单点聊天');
+
+  s1 = setAct1Disposition(s1, 'hv-10kv', 'P0').state;
+  assert.deepEqual(s1.pendingLines, [], '第 1 个点闭环不弹聊天');
+
+  s1 = setAct1Disposition(s1, 'aisle', 'P1').state;
+  s1 = attachAct1Evidence(s1, 'aisle', 'ev-aisle');
+  assert.deepEqual(s1.pendingLines, [], '第 2 个点取证闭环不弹聊天');
+
+  s1 = setAct1Disposition(s1, 'bay-temp', 'P2').state;
+  assert.deepEqual(s1.pendingLines, [], '第 3 个点未拍照前尚未闭环');
+  s1 = attachAct1Evidence(s1, 'bay-temp', 'ev-bay');
+  assert.deepEqual(
+    s1.pendingLines,
+    ['A1-END-1', 'A1-11', 'A1-12'],
+    '第一幕全部闭环后触发幕末剧情聊天'
+  );
+
+  // Act 2: 3 points
+  let s2 = detectAll(createAct1State(seedFor('A', 2), 2));
+  s2 = setAct1Disposition(s2, 'a2-crew', 'P0').state;
+  s2 = setAct1Disposition(s2, 'a2-wall', 'P0').state;
+  assert.deepEqual(s2.pendingLines, [], '第二幕前两个点闭环不弹聊天');
+  s2 = setAct1Disposition(s2, 'a2-oil', 'P0').state;
+  assert.deepEqual(
+    s2.pendingLines,
+    ['A2-END-1', 'A2-END-2'],
+    '第二幕全部闭环后触发幕末剧情聊天'
+  );
+
+  // Act 3: 3 points (no chat at end of Act 3 because Ending VN plays)
+  let s3 = detectAll(createAct1State(seedFor('A', 3), 3));
+  s3 = attachAct1Evidence(s3, 'a3-hardhat', 'ev-drone');
+  s3 = setAct1Disposition(s3, 'a3-hardhat', 'P2').state;
+  s3 = attachAct1Evidence(s3, 'a3-hardhat', 'ev-hardhat');
+  s3 = setAct1Disposition(s3, 'a3-pit', 'P0').state;
+  s3 = setAct1Disposition(s3, 'a3-box', 'P3').state;
+  s3 = attachAct1Evidence(s3, 'a3-box', 'ev-box');
+  assert.equal(isActComplete(s3), true);
+  assert.deepEqual(s3.pendingLines, [], '第三幕结束不触发气泡聊天（直接进入终章 VN）');
+});
+

@@ -333,6 +333,22 @@ export const ACT1_LINES: Record<string, VnLine> = {
     channel: 'phone',
     text: '下午挪，现在挪。通道是给人跑的，不是给木料堆躺的。',
   },
+  'A1-END-1': {
+    id: 'A1-END-1',
+    speakerId: 'luchuan',
+    monologue: true,
+    text: '上午运行区三处查完了。10kV 配电室与 F02 间隔的三相温升读数已登记，巡视通道被施工木料堆挤占。',
+  },
+  'A2-END-1': {
+    id: 'A2-END-1',
+    speakerId: 'wang',
+    text: '陆工，1# 主变这边人也核了、墙和本体也看了，活排得满，我们先开工，手续边干边补？',
+  },
+  'A2-END-2': {
+    id: 'A2-END-2',
+    speakerId: 'luchuan',
+    text: '一墙之隔就是带负荷运行的 2# 主变。人员资格、防火墙和主变本体的记录今天必须按规程落纸，下午我去北侧施工区。',
+  },
 };
 
 /** Ending labels. The ending body copy lives in EndingStub. */

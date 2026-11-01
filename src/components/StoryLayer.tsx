@@ -32,6 +32,7 @@ import {
   type StoryState,
 } from '../game/storySession';
 import type { CameraPerspective } from '../game/rules';
+import { soundEngine } from '../game/sound';
 import { DossierModal } from './DossierModal';
 import { EndingStub } from './EndingStub';
 import { StoryBubble } from './StoryBubble';
@@ -56,6 +57,7 @@ interface StoryLayerProps {
     reading: string
   ) => CaptureEvidenceResult;
   onOverlayChange: (open: boolean) => void;
+  onInspectPointChange?: (pointId: Act1PointId | null) => void;
   onChatChange: (active: boolean) => void;
   onEnterDrone: () => void;
   onExitDrone: () => void;
@@ -72,6 +74,7 @@ export const StoryLayer = forwardRef<StoryLayerHandle, StoryLayerProps>(function
     perspective,
     captureEvidence,
     onOverlayChange,
+    onInspectPointChange,
     onChatChange,
     onEnterDrone,
     onExitDrone,
@@ -126,6 +129,7 @@ export const StoryLayer = forwardRef<StoryLayerHandle, StoryLayerProps>(function
         reading ? `${reading.label} ${reading.unit}` : '现场观察'
       );
       if (result.record) {
+        soundEngine.playCameraShutter();
         dispatch({ type: 'act1-evidence', evidence: result.record });
         // Drone-recon points finish their detection through the aerial photo.
         // Bring the inspection HUD back immediately so the player can pick a
@@ -193,6 +197,13 @@ export const StoryLayer = forwardRef<StoryLayerHandle, StoryLayerProps>(function
   useEffect(() => {
     onOverlayChange(overlayOpen);
   }, [onOverlayChange, overlayOpen]);
+
+  useEffect(() => {
+    onInspectPointChange?.(story.phase === 'act1' ? workbenchPointId : null);
+    return () => {
+      onInspectPointChange?.(null);
+    };
+  }, [onInspectPointChange, story.phase, workbenchPointId]);
 
   useEffect(() => {
     onChatChange(showBubble);
@@ -304,12 +315,19 @@ export const StoryLayer = forwardRef<StoryLayerHandle, StoryLayerProps>(function
       {story.phase === 'act1' && point && (
         <ToolWorkbench
           point={point}
+          variant={story.act1?.variant}
           covered={covered}
           observed={Boolean(pointState?.completedActions.includes('visual'))}
           completedActions={pointState?.completedActions ?? []}
           resolved={resolved}
           disposition={pointState?.disposition}
           evidenceAttached={Boolean(pointState?.evidenceId)}
+          evidenceDataUrl={
+            pointState?.evidenceId
+              ? story.evidence.find((e) => e.id === pointState.evidenceId)
+                  ?.dataUrl
+              : undefined
+          }
           evidencePerspective={point.evidencePerspective}
           observationText={
             story.act1
@@ -322,6 +340,23 @@ export const StoryLayer = forwardRef<StoryLayerHandle, StoryLayerProps>(function
           completedPointsCount={completedPointsCount}
           totalPointsCount={totalPointsCount}
           onToolAction={(tool, actionId) => {
+            if (actionId === 'invalid') {
+              soundEngine.playHazardWarning();
+            } else if (tool === 'thermometer') {
+              const isOverheated =
+                (point.id === 'hv-10kv' && story.act1?.variant === 'C') ||
+                (point.id === 'bay-temp' && story.act1?.variant === 'B') ||
+                (point.id === 'a2-oil' && story.act1?.variant === 'C');
+              soundEngine.playThermalScan(Boolean(isOverheated));
+            } else if (tool === 'laser') {
+              soundEngine.playLaserMeasure();
+            } else if (tool === 'hollow-hammer') {
+              soundEngine.playHollowHammerTap(story.act1?.variant === 'B');
+            } else if (tool === 'leakage') {
+              soundEngine.playLeakageTest();
+            } else if (tool !== 'visual') {
+              soundEngine.playAuxiliaryTool(tool);
+            }
             dispatch({
               type: 'act1-action',
               pointId: point.id,
@@ -329,17 +364,19 @@ export const StoryLayer = forwardRef<StoryLayerHandle, StoryLayerProps>(function
               actionId,
             });
           }}
-          onVisualInspect={() =>
+          onVisualInspect={() => {
+            soundEngine.playVisualInspect();
             dispatch({
               type: 'act1-action',
               pointId: point.id,
               tool: 'visual',
               actionId: 'visual',
-            })
-          }
-          onDisposition={(grade) =>
-            dispatch({ type: 'act1-disposition', pointId: point.id, grade })
-          }
+            });
+          }}
+          onDisposition={(grade) => {
+            soundEngine.playUiBeep();
+            dispatch({ type: 'act1-disposition', pointId: point.id, grade });
+          }}
           onCapture={() => {
             const id = point.id;
             if (point.evidencePerspective === 'drone' && perspective !== 'drone') {
@@ -355,6 +392,7 @@ export const StoryLayer = forwardRef<StoryLayerHandle, StoryLayerProps>(function
               reading ? `${reading.label} ${reading.unit}` : `${point.name} 现场巡视`
             );
             if (result.record) {
+              soundEngine.playCameraShutter();
               dispatch({ type: 'act1-evidence', evidence: result.record });
             } else {
               dispatch({

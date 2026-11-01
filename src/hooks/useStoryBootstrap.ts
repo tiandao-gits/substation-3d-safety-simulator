@@ -20,15 +20,15 @@ import { clearSave, DEFAULT_SETTINGS, writeSave } from '../game/save';
 import {
   storyToSave,
   type StoryAction,
-  type StorySessionState,
+  type StoryState,
 } from '../game/storySession';
 
 export interface UseStoryBootstrapOptions {
   initialAutostart: boolean;
   gameState: GameState;
   setGameState: (next: GameState) => void;
-  story: StorySessionState;
-  storyRef: MutableRefObject<StorySessionState>;
+  story: StoryState;
+  storyRef: MutableRefObject<StoryState>;
   dispatchStory: Dispatch<StoryAction>;
   playerRef: MutableRefObject<PlayerState>;
 }

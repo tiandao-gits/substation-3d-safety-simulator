@@ -1,22 +1,27 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
+  Activity,
   Camera,
   CheckCircle2,
+  Crosshair,
   Eye,
   Plane,
   ScanLine,
   ShieldCheck,
+  Sparkles,
   Wrench,
   X,
 } from 'lucide-react';
-import type {
-  Act1ActionSpec,
-  Act1Grade,
-  Act1PointDef,
-  Act1Reading,
-  Act1Tool,
+import {
+  ACT_AMBIENT,
+  dispositionNeedsEvidence,
+  type Act1ActionSpec,
+  type Act1Grade,
+  type Act1PointDef,
+  type Act1Reading,
+  type Act1Tool,
+  type Act1Variant,
 } from '../game/act1';
-import { dispositionNeedsEvidence } from '../game/act1';
 import { DISPOSITION_PROFILES } from '../config/disposition';
 import { INSPECTION_POINT_DETAILS } from '../config/inspectionDetails';
 import { BACKPACK_DISPLAY_ITEMS } from '../config/gameText';
@@ -32,12 +37,14 @@ const MEASURE_MODE_HINT: Record<string, string> = {
 
 interface ToolWorkbenchProps {
   point: Act1PointDef;
+  variant?: Act1Variant;
   covered: boolean;
   observed: boolean;
   completedActions: string[];
   resolved: boolean;
   disposition?: Act1Grade;
   evidenceAttached: boolean;
+  evidenceDataUrl?: string;
   evidencePerspective?: 'drone';
   observationText: string;
   readings: Act1Reading[];
@@ -55,12 +62,14 @@ interface ToolWorkbenchProps {
 
 export function ToolWorkbench({
   point,
+  variant = 'A',
   covered,
   observed,
   completedActions,
   resolved,
   disposition,
   evidenceAttached,
+  evidenceDataUrl,
   evidencePerspective,
   observationText,
   readings,
@@ -115,7 +124,7 @@ export function ToolWorkbench({
     return () => window.removeEventListener('keydown', onKey, true);
   }, [covered, needsEvidence, onCapture, onClose, drawerAction, modeChoices]);
 
-  const detectionActions = useMemo(() => {
+  const { requiredDetectionActions, auxiliaryDetectionActions } = useMemo(() => {
     const droneRecon: Act1ActionSpec[] = point.requiredActions.includes(
       'drone-recon'
     )
@@ -128,13 +137,22 @@ export function ToolWorkbench({
           },
         ]
       : [];
-    const toolActions = Object.values(point.actions)
+    const allToolActions = Object.values(point.actions)
       .flat()
       .filter(
         (spec): spec is Act1ActionSpec =>
           Boolean(spec) && spec.id !== 'visual' && spec.quality === 'ok'
       );
-    return [...droneRecon, ...toolActions];
+    const reqIds = new Set(point.requiredActions);
+    const required = [
+      ...droneRecon,
+      ...allToolActions.filter((spec) => reqIds.has(spec.id)),
+    ];
+    const auxiliary = allToolActions.filter((spec) => !reqIds.has(spec.id));
+    return {
+      requiredDetectionActions: required,
+      auxiliaryDetectionActions: auxiliary,
+    };
   }, [point.actions, point.requiredActions]);
 
   const completedIds = useMemo(() => new Set(completedActions), [completedActions]);
@@ -165,25 +183,210 @@ export function ToolWorkbench({
   };
 
   const canFinish = resolved;
-  const visualOnly = detectionActions.length === 0;
+  const visualOnly = requiredDetectionActions.length === 0;
 
-  const renderStatus = (action: Act1ActionSpec) => {
+  const renderStatus = (action: Act1ActionSpec, isAuxiliary = false) => {
     if (!observed) return { label: '待观察', cls: 'border-slate-200 bg-slate-50 text-slate-400' };
-    if (covered) return { label: '已检测', cls: 'border-emerald-200 bg-emerald-50 text-emerald-700' };
-    if (completedIds.has(action.id))
-      return { label: '已检测', cls: 'border-emerald-200 bg-emerald-50 text-emerald-700' };
-    return { label: '待检测', cls: 'border-amber-300 bg-amber-50 text-amber-800' };
+    if (completedIds.has(action.id) || (!isAuxiliary && covered)) {
+      return {
+        label: isAuxiliary ? '已复核' : '已检测',
+        cls: 'border-emerald-200 bg-emerald-50 text-emerald-700',
+      };
+    }
+    return {
+      label: isAuxiliary ? '选做复核' : '待检测',
+      cls: isAuxiliary
+        ? 'border-sky-200 bg-sky-50 text-sky-700'
+        : 'border-amber-300 bg-amber-50 text-amber-800',
+    };
   };
+
+  const ambientC = ACT_AMBIENT[point.act].temperatureC;
+  const latestReading = readings[0];
+
+  const thermalFormulaInfo = useMemo(() => {
+    if (point.id !== 'hv-10kv' && point.id !== 'bay-temp') return null;
+    if (!latestReading) return null;
+    const vals = latestReading.values;
+    if (vals.length < 2) {
+      return {
+        incomplete: true,
+        t1: vals[0] ?? 0,
+        text: `已测单相 T₁=${(vals[0] ?? 0).toFixed(1)}℃，缺少参考相 T₂，无法计算 DL/T 664 相对温差 δt = (T₁ - T₂)/(T₁ - T₀)！`,
+      };
+    }
+    const sorted = [...vals].sort((a, b) => b - a);
+    const t1 = sorted[0];
+    const t2 = sorted[1];
+    const delta = t1 - t2;
+    const rel = t1 > ambientC ? ((delta / (t1 - ambientC)) * 100).toFixed(1) : '0.0';
+    return {
+      incomplete: false,
+      t1,
+      t2,
+      rel,
+      text: `DL/T 664 相对温差 δt = (${t1.toFixed(1)} - ${t2.toFixed(1)}) / (${t1.toFixed(1)} - ${ambientC}) = ${rel}%`,
+    };
+  }, [ambientC, latestReading, point.id]);
 
   return (
     <>
-      <div className="modal-backdrop fixed inset-0 z-40 flex items-center justify-center overflow-hidden bg-slate-950/55 p-3 backdrop-blur-[3px] pointer-events-auto select-none sm:p-5">
+      <div className="modal-backdrop fixed inset-0 z-40 flex items-center justify-center lg:justify-between overflow-hidden bg-slate-950/20 p-3 pointer-events-auto select-none sm:p-5 lg:px-7">
+        {/* Left-Side Interactive 3D Viewport & Instrument HUD */}
+        <div className="relative hidden lg:flex flex-col justify-between h-[86vh] flex-1 mr-6 rounded-xl border border-sky-400/40 bg-gradient-to-t from-slate-950/75 via-transparent to-slate-950/45 p-4 pointer-events-auto">
+          <div className="flex items-center justify-between gap-2">
+            <div className="inline-flex items-center gap-2 rounded-md border border-sky-400/50 bg-slate-950/85 px-3 py-1.5 font-mono text-xs text-sky-200 shadow-lg">
+              <ScanLine className="h-3.5 w-3.5 text-sky-400" />
+              <span>3D 实景特写 · {detail?.bayName ?? point.zone}</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="rounded border border-emerald-500/40 bg-emerald-950/80 px-2.5 py-1 font-mono text-[11px] text-emerald-300">
+                可直接点击 3D 视窗靶点实操
+              </span>
+              <span className="rounded border border-slate-700/80 bg-slate-950/80 px-2.5 py-1 font-mono text-[11px] text-slate-300">
+                坐标 X {point.x.toFixed(1)} / Z {point.z.toFixed(1)}
+              </span>
+            </div>
+          </div>
+
+          {/* Interactive 3D Target Reticle Hotspots overlaid on the 3D close-up */}
+          <div className="relative my-auto flex flex-col items-center justify-center gap-3 py-4">
+            <div className="flex flex-wrap items-center justify-center gap-3">
+              <button
+                type="button"
+                onClick={onVisualInspect}
+                className={`group flex items-center gap-2 rounded-full border px-3.5 py-2 text-xs font-bold shadow-lg backdrop-blur-md transition-all cursor-pointer ${
+                  observed
+                    ? 'border-emerald-400/80 bg-emerald-950/80 text-emerald-200 hover:bg-emerald-900/90'
+                    : 'border-sky-400 bg-sky-950/85 text-sky-100 ring-2 ring-sky-400/40 hover:bg-sky-900'
+                }`}
+              >
+                <Eye className="h-4 w-4 text-sky-300" />
+                <span>[1] 3D 实景观察：{point.shortName}</span>
+                {observed && <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" />}
+              </button>
+
+              {requiredDetectionActions.map((action) => {
+                const done = completedIds.has(action.id) || covered;
+                return (
+                  <button
+                    key={action.id}
+                    type="button"
+                    disabled={!observed || (action.id === 'drone-recon' && done)}
+                    onClick={() => {
+                      if (action.id === 'drone-recon') {
+                        onRequestDrone();
+                      } else {
+                        setModeChoices(null);
+                        setDrawerAction(action);
+                      }
+                    }}
+                    className={`group flex items-center gap-2 rounded-full border px-3.5 py-2 text-xs font-bold shadow-lg backdrop-blur-md transition-all ${
+                      !observed
+                        ? 'cursor-not-allowed border-slate-700 bg-slate-950/65 text-slate-500'
+                        : done
+                          ? 'cursor-pointer border-emerald-400/80 bg-emerald-950/80 text-emerald-200 hover:bg-emerald-900/90'
+                          : 'cursor-pointer border-amber-400 bg-amber-950/85 text-amber-100 ring-2 ring-amber-400/40 hover:bg-amber-900/90'
+                    }`}
+                  >
+                    <Crosshair className="h-4 w-4 text-amber-300" />
+                    <span>[2] 实景测点：{action.label}</span>
+                    {done && <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" />}
+                  </button>
+                );
+              })}
+
+              {auxiliaryDetectionActions.map((action) => {
+                const done = completedIds.has(action.id);
+                return (
+                  <button
+                    key={action.id}
+                    type="button"
+                    disabled={!observed}
+                    onClick={() => {
+                      setModeChoices(null);
+                      setDrawerAction(action);
+                    }}
+                    className={`group flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-semibold shadow-lg backdrop-blur-md transition-all ${
+                      !observed
+                        ? 'cursor-not-allowed border-slate-700 bg-slate-950/60 text-slate-500'
+                        : done
+                          ? 'cursor-pointer border-emerald-400/70 bg-emerald-950/75 text-emerald-200'
+                          : 'cursor-pointer border-sky-400/70 bg-slate-950/80 text-sky-200 hover:border-sky-300 hover:bg-sky-950/90'
+                    }`}
+                  >
+                    <Sparkles className="h-3.5 w-3.5 text-sky-300" />
+                    <span>[专项复核] {action.label}</span>
+                    {done && <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" />}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Bottom 3D Instrument Telemetry & Scene Clue Card */}
+          <div className="space-y-2">
+            {observed && (
+              <div className="rounded-lg border border-sky-500/40 bg-slate-950/85 px-3.5 py-2.5 text-xs text-slate-100 shadow-lg">
+                <div className="flex items-center justify-between gap-2 font-mono text-[11px] text-sky-300">
+                  <span className="flex items-center gap-1.5 font-bold">
+                    <Activity className="h-3.5 w-3.5 text-sky-400" />
+                    <span>3D 现场遥测与规程判据屏</span>
+                  </span>
+                  <span>环温 T₀ = {ambientC} ℃</span>
+                </div>
+
+                {thermalFormulaInfo && (
+                  <div
+                    className={`mt-1.5 rounded border px-2.5 py-1.5 font-mono text-[11.5px] ${
+                      thermalFormulaInfo.incomplete
+                        ? 'border-red-400/50 bg-red-950/60 text-red-200'
+                        : Number(thermalFormulaInfo.rel) >= 80
+                          ? 'border-amber-400/60 bg-amber-950/60 text-amber-200'
+                          : 'border-emerald-400/40 bg-emerald-950/50 text-emerald-200'
+                    }`}
+                  >
+                    {thermalFormulaInfo.text}
+                  </div>
+                )}
+
+                {point.id === 'a2-crew' && (
+                  <div className="mt-1.5 grid grid-cols-2 gap-2 font-mono text-[11px]">
+                    <div className="rounded border border-slate-700 bg-slate-900/90 px-2.5 py-1.5 text-slate-200">
+                      <span className="text-amber-300 font-bold">黑色工装（队列前）：</span>
+                      项目经理 王振 · 工作票签发核对
+                    </div>
+                    <div className="rounded border border-slate-700 bg-slate-900/90 px-2.5 py-1.5 text-slate-200">
+                      <span className="text-sky-300 font-bold">蓝色工装（列队 4 人）：</span>
+                      {variant === 'D'
+                        ? '3 号焊工特种作业证超复审期（异常）'
+                        : '4 人特种作业操作证均在有效期内'}
+                    </div>
+                  </div>
+                )}
+
+                {point.id === 'a2-wall' && completedIds.has('wall-hollow') && (
+                  <div className="mt-1.5 rounded border border-slate-700 bg-slate-900/90 px-2.5 py-1.5 font-mono text-[11px] text-slate-200">
+                    {variant === 'B'
+                      ? '声波频谱：290 Hz 低频空腔共鸣（阻尼衰减 120 ms）· 已标定红粉笔空鼓圈记'
+                      : '声波频谱：195 Hz 密实高阻尼短促回波（衰减 40 ms）· 抹灰层密实'}
+                  </div>
+                )}
+              </div>
+            )}
+
+            <div className="rounded-lg border border-slate-700/70 bg-slate-950/85 px-3.5 py-2.5 text-xs leading-5 text-slate-200 shadow-lg">
+              <span className="font-bold text-sky-300">现场特征：</span>
+              <span>{point.clue}</span>
+            </div>
+          </div>
+        </div>
         <div
           ref={ref}
           role="dialog"
           aria-modal="true"
           aria-label={`巡检：${point.name}`}
-          className="modal-panel relative flex max-h-[92vh] w-full max-w-[760px] flex-col overflow-hidden rounded-xl border border-slate-300 border-t-4 border-t-sky-600 bg-white text-left text-slate-900 shadow-[0_24px_80px_rgba(2,6,23,0.45)]"
+          className="modal-panel relative flex max-h-[92vh] w-full max-w-[640px] shrink-0 flex-col overflow-hidden rounded-xl border border-slate-300 border-t-4 border-t-sky-600 bg-white text-left text-slate-900 shadow-[0_24px_80px_rgba(2,6,23,0.55)]"
         >
           <header className="flex items-start justify-between gap-4 border-b border-slate-200 bg-slate-50 px-5 py-3">
             <div className="flex min-w-0 items-start gap-3">
@@ -257,7 +460,7 @@ export function ToolWorkbench({
               )}
             </section>
 
-            {/* Step 2 — every detection point must be measured */}
+            {/* Step 2 — every required detection point must be measured, plus optional auxiliary tools */}
             <section
               className={`rounded-lg border bg-white p-3 shadow-sm ${
                 observed ? 'border-slate-200' : 'border-slate-200 opacity-60'
@@ -272,12 +475,17 @@ export function ToolWorkbench({
                     逐项检测
                   </h3>
                   <span className="rounded bg-slate-100 px-1.5 py-0.5 text-xs font-semibold text-slate-500">
-                    {detectionActions.length + (visualOnly ? 1 : 0)} 项
+                    {requiredDetectionActions.length + (visualOnly ? 1 : 0)} 项必测
                   </span>
+                  {auxiliaryDetectionActions.length > 0 && (
+                    <span className="rounded bg-sky-50 px-1.5 py-0.5 text-xs font-semibold text-sky-700">
+                      +{auxiliaryDetectionActions.length} 项辅助复核
+                    </span>
+                  )}
                   {covered && <CheckCircle2 className="h-4 w-4 text-emerald-600" />}
                 </div>
                 <span className="text-xs text-slate-400">
-                  全部检测完成后才能处置
+                  必测项完成后即可处置
                 </span>
               </div>
 
@@ -289,7 +497,7 @@ export function ToolWorkbench({
                         现场观察判定
                       </div>
                       <div className="truncate text-xs text-slate-500">
-                        本点位以观察结果作为检测依据
+                        本点位以观察结果作为必测依据，可配合下方辅助工具深度复核
                       </div>
                     </div>
                     <span
@@ -304,8 +512,8 @@ export function ToolWorkbench({
                   </div>
                 )}
 
-                {detectionActions.map((action) => {
-                  const status = renderStatus(action);
+                {requiredDetectionActions.map((action) => {
+                  const status = renderStatus(action, false);
                   return (
                     <div
                       key={action.id}
@@ -320,7 +528,7 @@ export function ToolWorkbench({
                             ? '启动无人机升空，对准人员取景后完成检测'
                             : action.tool === 'thermometer'
                               ? '选择红外测温仪后可选择三相、单相或扫测'
-                              : '选择仪器读取该测点数据'}
+                              : '选择对应检测仪器读取该测点数据'}
                         </div>
                       </div>
                       <div className="flex shrink-0 items-center gap-2">
@@ -363,6 +571,51 @@ export function ToolWorkbench({
                             <span>检测</span>
                           </button>
                         )}
+                      </div>
+                    </div>
+                  );
+                })}
+
+                {auxiliaryDetectionActions.map((action) => {
+                  const status = renderStatus(action, true);
+                  return (
+                    <div
+                      key={action.id}
+                      className="flex items-center justify-between gap-3 rounded-md border border-dashed border-sky-200 bg-sky-50/40 px-3 py-2"
+                    >
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-1.5 truncate text-[12.5px] font-semibold text-slate-800">
+                          <span>{action.label}</span>
+                          <span className="rounded bg-sky-100 px-1.5 py-0.5 text-[10px] font-bold text-sky-700">
+                            专项工具核验
+                          </span>
+                        </div>
+                        <div className="truncate text-xs text-slate-500">
+                          调用随身背包中的专项量具/手电/电表对现场细节做深度复核
+                        </div>
+                      </div>
+                      <div className="flex shrink-0 items-center gap-2">
+                        <span
+                          className={`whitespace-nowrap rounded border px-2 py-0.5 text-xs font-semibold ${status.cls}`}
+                        >
+                          {status.label}
+                        </span>
+                        <button
+                          type="button"
+                          disabled={!observed}
+                          onClick={() => {
+                            setModeChoices(null);
+                            setDrawerAction(action);
+                          }}
+                          className={`flex min-h-8 items-center gap-1.5 whitespace-nowrap rounded-md border px-2.5 py-1 text-xs font-bold transition-colors ${
+                            observed
+                              ? 'cursor-pointer border-sky-400 bg-white text-sky-800 hover:bg-sky-100'
+                              : 'cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400'
+                          }`}
+                        >
+                          <Wrench className="h-3.5 w-3.5" />
+                          <span>复核</span>
+                        </button>
                       </div>
                     </div>
                   );
@@ -499,6 +752,15 @@ export function ToolWorkbench({
                       <span>{evidenceAttached ? '重新拍照' : '拍照 [G]'}</span>
                     </button>
                   </div>
+                  {evidenceAttached && evidenceDataUrl && (
+                    <div className="overflow-hidden rounded-md border border-emerald-300 bg-slate-950">
+                      <img
+                        src={evidenceDataUrl}
+                        alt={`${point.name} 现场取证照片`}
+                        className="h-28 w-full object-cover"
+                      />
+                    </div>
+                  )}
                   {!evidenceAttached && (
                     <p className="text-xs text-slate-500">
                       {disposition} 级处置必须附现场证据，拍照后本点位才算闭环。

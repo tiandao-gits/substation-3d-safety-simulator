@@ -312,6 +312,9 @@ const ACT1_POINTS_DEF: Act1PointDef[] = [
     actions: {
       visual: [VISUAL_ACTION],
       thermometer: IR_ACTIONS,
+      flashlight: [
+        { id: 'cabinet-light', label: '照亮柜内观察窗与封堵', tool: 'flashlight', quality: 'ok' },
+      ],
     },
     standardGrade: { A: 'P0', B: 'P0', C: 'P2', D: 'P0' },
     finding: {
@@ -389,6 +392,12 @@ const ACT2_POINTS_DEF: Act1PointDef[] = [
     requiredActions: ['visual'],
     actions: {
       visual: [VISUAL_ACTION],
+      torque: [
+        { id: 'ground-torque', label: '复核临时接地螺栓力矩', tool: 'torque', quality: 'ok' },
+      ],
+      caliper: [
+        { id: 'ground-caliper', label: '测量接地铜排截面尺寸', tool: 'caliper', quality: 'ok' },
+      ],
     },
     standardGrade: { A: 'P0', B: 'P0', C: 'P0', D: 'P1' },
     finding: {
@@ -416,6 +425,9 @@ const ACT2_POINTS_DEF: Act1PointDef[] = [
       'hollow-hammer': [
         { id: 'wall-hollow', label: '敲击防火墙检查空鼓', tool: 'hollow-hammer', quality: 'ok' },
       ],
+      feeler: [
+        { id: 'wall-crack', label: '测量墙面裂缝宽度', tool: 'feeler', quality: 'ok' },
+      ],
     },
     standardGrade: { A: 'P0', B: 'P2', C: 'P0', D: 'P0' },
     finding: {
@@ -441,6 +453,9 @@ const ACT2_POINTS_DEF: Act1PointDef[] = [
     actions: {
       visual: [VISUAL_ACTION],
       thermometer: [{ id: 'oil-temp', label: '测量顶层油温', tool: 'thermometer', quality: 'ok' }],
+      flashlight: [
+        { id: 'oil-light', label: '背光侧照亮检查法兰油迹', tool: 'flashlight', quality: 'ok' },
+      ],
     },
     standardGrade: { A: 'P0', B: 'P0', C: 'P2', D: 'P0' },
     finding: {
@@ -522,6 +537,9 @@ const ACT3_POINTS_DEF: Act1PointDef[] = [
       visual: [VISUAL_ACTION],
       leakage: [
         { id: 'leakage-test', label: '测试末级漏保动作值', tool: 'leakage', quality: 'ok' },
+      ],
+      multimeter: [
+        { id: 'box-voltage', label: '点测进线电压与零地电位', tool: 'multimeter', quality: 'ok' },
       ],
     },
     standardGrade: { A: 'P3', B: 'P3', C: 'P3', D: 'P3' },
@@ -943,19 +961,6 @@ export function applyAct1Penalty(
   return next;
 }
 
-function pushLine(state: Act1State, ...ids: string[]): Act1State {
-  if (state.act !== 1) return state;
-  const fresh = ids.filter(
-    (id) => !state.seenLines.includes(id) && !state.pendingLines.includes(id)
-  );
-  if (fresh.length === 0) return state;
-  return {
-    ...state,
-    pendingLines: [...state.pendingLines, ...fresh],
-    seenLines: [...state.seenLines, ...fresh],
-  };
-}
-
 /** Queues briefing lines for any act (spatial triggers); duplicates are ignored. */
 export function queueAct1Lines(state: Act1State, ids: string[]): Act1State {
   const fresh = ids.filter(
@@ -1131,7 +1136,6 @@ export function applyAct1Action(
   if (spec.quality === 'coverage') {
     const r = irReading(point.id, state.variant, state.act, 'single');
     next = deduction(next, `coverage-${pointId}`, '覆盖不足：仅记录了单相', 10);
-    next = pushLine(next, 'A1-01');
     return {
       state: {
         ...next,
@@ -1157,7 +1161,6 @@ export function applyAct1Action(
   if (spec.quality === 'condition') {
     const r = irReading(point.id, state.variant, state.act, 'casual');
     next = deduction(next, `condition-${pointId}`, '测量条件不符：距离/角度未稳定', 6);
-    next = pushLine(next, 'A1-01');
     return {
       state: {
         ...next,
@@ -1224,6 +1227,27 @@ export function applyAct1Action(
       '额定 30 mA · 动作时间 0.18 s'
     );
     text = '记录：漏保动作电流 42 mA';
+  } else if (spec.id === 'cabinet-light') {
+    text =
+      state.variant === 'C'
+        ? '辅助核验：照亮 3 号柜观察窗，见 B 相母排接头表面氧化变色，柜底防火封堵严密。'
+        : '辅助核验：照亮柜内观察窗，三相母排色泽正常，柜底防火封堵与绝缘垫完好。';
+  } else if (spec.id === 'ground-torque') {
+    text = '辅助核验：1# 主变检修临时接地线螺栓紧固力矩 42 N·m（标准 ≥ 40 N·m），接触可靠。';
+  } else if (spec.id === 'ground-caliper') {
+    text = '辅助核验：临时接地铜排截面宽 30.2 mm × 厚 4.1 mm，满足安规截面要求。';
+  } else if (spec.id === 'wall-crack') {
+    text =
+      state.variant === 'B'
+        ? '辅助核验：防火墙东侧受潮处抹灰裂缝宽度 1.8 mm（标准 ≤ 0.3 mm），伴随局部脱层。'
+        : '辅助核验：墙面仅见表面收缩细纹（< 0.15 mm），无结构性与脱层裂缝。';
+  } else if (spec.id === 'oil-light') {
+    text =
+      state.variant === 'C'
+        ? '辅助核验：背光侧照亮见主变底部放油阀法兰边缘有新鲜渗油挂滴，围堰内有油膜反光。'
+        : '辅助核验：背光侧照亮检查底部阀门与法兰密封垫完好，无渗漏油迹。';
+  } else if (spec.id === 'box-voltage') {
+    text = '辅助核验：配电箱进线电压 228 V，PE 保护零线接触不良（零地电位差 18.4 V 偏高）。';
   } else if (spec.id === 'visual') {
     text = getAct1VisualText(point.id, state.variant);
   }
@@ -1243,17 +1267,6 @@ export function applyAct1Action(
       },
     },
   };
-
-  next = pushLine(next, 'A1-00', 'A1-01');
-  if (pointId === 'bay-temp' && spec.id === 'ir-3') {
-    next = pushLine(next, 'A1-02', 'A1-03', 'A1-04');
-  }
-  if (pointId === 'bay-temp' && state.variant === 'B' && spec.id === 'ir-3') {
-    next = pushLine(next, 'A1-05');
-  }
-  if (pointId === 'aisle' && spec.id === 'clearance') {
-    next = pushLine(next, 'A1-08', 'A1-11', 'A1-12');
-  }
 
   return {
     state: next,
@@ -1316,6 +1329,27 @@ export interface Act1DispositionOutcome {
 }
 
 /**
+ * 第一幕、第二幕在全部检查点完成时触发幕末剧情对话；第三幕结束直接进入结局 VN，不弹幕末气泡。
+ */
+const ACT_END_CHAT_LINES: Partial<Record<ActNo, string[]>> = {
+  1: ['A1-END-1', 'A1-11', 'A1-12'],
+  2: ['A2-END-1', 'A2-END-2'],
+};
+
+function queueActEndLinesIfComplete(
+  prevState: Act1State,
+  nextState: Act1State
+): Act1State {
+  if (!isActComplete(prevState) && isActComplete(nextState)) {
+    const endLines = ACT_END_CHAT_LINES[nextState.act];
+    if (endLines && endLines.length > 0) {
+      return queueAct1Lines(nextState, endLines);
+    }
+  }
+  return nextState;
+}
+
+/**
  * 记录处置等级。等级即结论：P0 表示正常记录、闭环完成；
  * P1 及以上表示隐患处置，还需现场取证（attachAct1Evidence）才算闭环。
  *
@@ -1333,19 +1367,21 @@ export function setAct1Disposition(
     return { state, ok: false, message: '请先完成观察与全部检测。' };
   }
 
-  return {
-    state: {
-      ...state,
-      points: {
-        ...state.points,
-        [pointId]: {
-          ...state.points[pointId],
-          disposition: grade,
-          evidenceId:
-            grade === 'P0' ? undefined : state.points[pointId].evidenceId,
-        },
+  const nextState = queueActEndLinesIfComplete(state, {
+    ...state,
+    points: {
+      ...state.points,
+      [pointId]: {
+        ...state.points[pointId],
+        disposition: grade,
+        evidenceId:
+          grade === 'P0' ? undefined : state.points[pointId].evidenceId,
       },
     },
+  });
+
+  return {
+    state: nextState,
     ok: true,
     message:
       grade === 'P0'
@@ -1363,7 +1399,6 @@ export function attachAct1Evidence(
   pointId: Act1PointId,
   evidenceId: string
 ): Act1State {
-  const firstEvidence = state.act === 1 && !state.seenLines.includes('A1-10');
   const point = getAct1Point(pointId);
   const pointState = state.points[pointId];
   const completedActions =
@@ -1371,15 +1406,14 @@ export function attachAct1Evidence(
     !pointState.completedActions.includes('drone-recon')
       ? [...pointState.completedActions, 'drone-recon']
       : pointState.completedActions;
-  return {
+  const nextState: Act1State = {
     ...state,
     points: {
       ...state.points,
       [pointId]: { ...pointState, evidenceId, completedActions },
     },
-    pendingLines: firstEvidence ? [...state.pendingLines, 'A1-10'] : state.pendingLines,
-    seenLines: firstEvidence ? [...state.seenLines, 'A1-10'] : state.seenLines,
   };
+  return queueActEndLinesIfComplete(state, nextState);
 }
 
 /* ------------------------------------------------------------------ */

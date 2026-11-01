@@ -144,12 +144,12 @@ export function createApartmentDoorView(
   sign.rotation.y = -Math.PI / 2;
   detailedPivot.add(sign);
 
-  // 室内无天光直射，补两盏冷白灯让已建好的柜列与屏柜可读。
+  // 室内无天光直射，补两盏柔和冷白灯让柜列与屏柜可读且不过曝。
   const interiorLights = [
     { x: 32.8, z: -22.6 },
     { x: 35.8, z: -22.6 },
   ].map(({ x, z }, index) => {
-    const light = new THREE.PointLight(0xdcecff, 9, 8.5, 2);
+    const light = new THREE.PointLight(0xdcecff, 1.2, 6.5, 2);
     light.name = `HV_ROOM_LIGHT_${index + 1}`;
     light.position.set(x, 2.45, z);
     group.add(light);
