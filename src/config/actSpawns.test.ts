@@ -122,4 +122,12 @@ test('第三幕开场过场：侧拍公寓门口，人物出门后走到楼下�
       `路点 (${point.x}, ${point.z}) 落入带电区`
     );
   }
+
+  // 第三幕开场 CG 背景与自白剧情校验：刚午觉起来、准备去北区看看，并在 CG 结束后附带一句陆川自白。
+  assert.match(act3.note ?? '', /午觉/);
+  assert.match(act3.note ?? '', /北区/);
+  assert.match(cutscene.caption ?? '', /公寓/);
+  assert.match(cutscene.subCaption ?? '', /午觉/);
+  assert.match(cutscene.subCaption ?? '', /北区/);
+  assert.deepEqual(cutscene.openingLines, ['A3-OPEN-1']);
 });

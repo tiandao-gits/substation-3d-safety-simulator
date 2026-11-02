@@ -47,6 +47,8 @@ export interface CutsceneScript {
   endYaw: number;
   caption?: string;
   subCaption?: string;
+  /** 开场过场启动时同步入队的角色自白/剧情对话行 id（对应 ACT1_LINES）。 */
+  openingLines?: string[];
 }
 
 export interface CutsceneFrame {

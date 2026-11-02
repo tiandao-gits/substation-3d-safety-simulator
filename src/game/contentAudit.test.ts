@@ -12,6 +12,7 @@ import {
   ENDING_STUB,
   PROLOGUE,
 } from '../config/dialogues';
+import { ACT_START_SPAWNS } from '../config/actSpawns';
 import { GAME_TEXT, MESSAGES } from '../config/gameText';
 import { ACT_POINTS } from './act1';
 import { TOOL_HINT_TERMS, auditPlayerFacingContent, type AuditEntry } from './contentAudit';
@@ -90,11 +91,21 @@ test('HUD and banner copy never names an inspection tool', () => {
   assert.deepEqual(violations, []);
 });
 
-test('每个排队播放的现场对话 id 都有对应文案', () => {
+test('每个排队播放的现场对话与开场自白 id 都有对应文案', () => {
   const missing: string[] = [];
   for (const [act, trigger] of Object.entries(ACT_BRIEFING_TRIGGERS)) {
     for (const id of trigger.lines) {
       if (!ACT1_LINES[id]) missing.push(`第${act}幕 ${id}`);
+    }
+  }
+  for (const [act, spawn] of Object.entries(ACT_START_SPAWNS)) {
+    for (const id of spawn.cutscene?.openingLines ?? []) {
+      const line = ACT1_LINES[id];
+      if (!line) missing.push(`第${act}幕开场 ${id}`);
+      else {
+        assert.equal(line.speakerId, 'luchuan');
+        assert.equal(line.monologue, true);
+      }
     }
   }
   assert.deepEqual(missing, [], '缺少文案会导致聊天播完后遮罩无法关闭');

@@ -54,7 +54,7 @@ export function StoryBubble({ line, onClose }: StoryBubbleProps) {
       aria-live="polite"
       aria-label={`${speakerName}：${line.text}`}
       onClick={advance}
-      className="fixed inset-0 z-40 cursor-pointer select-none overflow-hidden bg-transparent"
+      className="fixed inset-0 z-[70] cursor-pointer select-none overflow-hidden bg-transparent"
     >
       {/* Cinematic letterbox */}
       <div className="pointer-events-none absolute inset-x-0 top-0 h-[13vh] bg-black" />

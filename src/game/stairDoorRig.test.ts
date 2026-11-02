@@ -61,7 +61,7 @@ test('门扇被切出来，门框留在原网格里', () => {
   assert.equal(leaf.name, 'STAIR_DOOR_LEAF_glass');
 });
 
-test('关门时门扇贴在门洞上，开门后甩到站区一侧', () => {
+test('关门时门扇贴在门洞上，开门后甩到站区一侧且不穿入南侧门廊墙体', () => {
   const { host } = buildHost();
   const rig = createStairDoorRig(host);
   assert.ok(rig);
@@ -73,11 +73,43 @@ test('关门时门扇贴在门洞上，开门后甩到站区一侧', () => {
 
   rig.setOpen(1);
   const opened = leafWorldPoints(rig);
-  // 铰链在南端 z=-19.185，门扇向北展开；开门后自由端被甩向 -x（站区）。
+  // 铰链在南端 z=-19.20，门扇向北展开；开门后自由端被甩向 -x（站区），且全程停留在南墙面 z=-19.174 以北。
   assert.ok(opened[0].x < 30.65 - 0.2, '门扇自由端应离开墙面、朝站区张开');
   assert.ok(
-    opened.every((p) => p.z > -19.9),
-    '门扇不应继续挡在门洞北侧'
+    opened.every((p) => p.z > -19.9 && p.z < -19.174),
+    '门扇不应挡在门洞北侧，也不能越过 z=-19.174 穿入南侧砖墙'
+  );
+});
+
+test('跨越主门扇盒边界的通高外框与北侧亮子不会被误切走', () => {
+  const host = new THREE.Group();
+  const positions = new Float32Array([
+    // 主门扇内三角形（应被切出）
+    30.655, 0.8, -19.8,
+    30.655, 2.0, -19.8,
+    30.655, 0.8, -19.3,
+    // 通高外门框立柱（顶点延伸到 y=2.838，质心虽在盒内但顶部越界，必须留在原网格）
+    30.655, 0.27, -19.201,
+    30.655, 0.27, -19.202,
+    30.655, 2.838, -19.201,
+    // 北侧固定窄亮子（z < -20.0315，必须留在原网格）
+    30.658, 0.4, -20.23,
+    30.658, 2.0, -20.23,
+    30.658, 0.4, -20.09,
+  ]);
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  const mesh = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial());
+  mesh.name = 'metal_brown';
+  host.add(mesh);
+
+  const rig = createStairDoorRig(host);
+  assert.ok(rig);
+  assert.equal(rig.leafTriangles, 1, '只切出主门扇内的 1 个三角形');
+  assert.equal(
+    mesh.geometry.getAttribute('position').count,
+    6,
+    '通高外门框与北侧固定亮子的 2 个三角形都留在原网格'
   );
 });
 

@@ -18,18 +18,26 @@ import * as THREE from 'three';
  *   即门后是真的门洞，人物可以正常走出来。
  */
 export const STAIR_DOOR = {
-  /** 铰链：门扇南侧下角，向站区（西，-x）旋开。 */
-  hinge: { x: 30.655, y: 0.25, z: -19.185 },
-  /** 最大开度约 108°，门扇贴到西墙外侧，不挡门洞也不显得半开。 */
-  openAngle: Math.PI * 0.6,
-  /** 门扇包围盒（世界坐标）：只装门扇，不含门框与门楣。 */
+  /** 铰链：主门扇南侧合页轴线（x=30.652, z=-19.200），向站区（西，-x）旋开。 */
+  hinge: { x: 30.652, y: 0.25, z: -19.2 },
+  /**
+   * 最大开度约 86.4°（0.48π）：门口外侧是深 0.96m 的内凹门廊，南侧砖墙面在 z=-19.174；
+   * 控制在 90° 以内可让门扇平行贴靠南侧门廊内壁，既完全敞开门洞又绝不穿入南墙。
+   */
+  openAngle: Math.PI * 0.48,
+  /**
+   * 主门扇包围盒（世界坐标）：
+   * - 仅包含南侧可开启主门扇（z -20.0315…-19.194，宽约 0.83m），
+   * - 排除北侧固定窄亮子（z -20.283…-20.032）、顶部亮子与门楣（y > 2.145）、
+   *   以及两侧通高外门框立柱（y 0.265…2.838）。
+   */
   leafBox: {
     minX: 30.59,
-    maxX: 30.705,
-    minY: 0.27,
-    maxY: 2.155,
-    minZ: -20.295,
-    maxZ: -19.175,
+    maxX: 30.675,
+    minY: 0.28,
+    maxY: 2.145,
+    minZ: -20.0315,
+    maxZ: -19.194,
   },
   /** 参与门扇的合并网格名（顺序无关）。 */
   meshNames: ['metal_brown', 'metal_silver', 'glass', 'plastic_black', 'sign_2'] as readonly string[],
@@ -78,8 +86,9 @@ function buildGeometry(
 }
 
 /**
- * 把一个合并网格按"三角形质心是否落在门扇包围盒里"拆成两份。
- * 直接操作非索引展开后的属性，避免索引/分组（multi-material）带来的边角情况。
+ * 把一个合并网格按"三角形三个顶点是否全部落在主门扇包围盒里"拆成两份。
+ * 要求三顶点全在盒内可避免把通高外门框立柱（y 0.265…2.838，质心仍在 y<2.15）
+ * 或横贯全宽的门楣（z -20.31…-19.20）误切到门扇上。
  */
 function splitMeshByLeafBox(
   mesh: THREE.Mesh,
@@ -99,16 +108,16 @@ function splitMeshByLeafBox(
   const a = new THREE.Vector3();
   const b = new THREE.Vector3();
   const c = new THREE.Vector3();
-  const centroid = new THREE.Vector3();
 
   for (let tri = 0; tri < position.count / 3; tri += 1) {
     const base = tri * 3;
     a.fromBufferAttribute(position, base).applyMatrix4(mesh.matrixWorld);
     b.fromBufferAttribute(position, base + 1).applyMatrix4(mesh.matrixWorld);
     c.fromBufferAttribute(position, base + 2).applyMatrix4(mesh.matrixWorld);
-    centroid
-      .set((a.x + b.x + c.x) / 3, (a.y + b.y + c.y) / 3, (a.z + b.z + c.z) / 3);
-    const inside = leafBox.containsPoint(centroid);
+    const inside =
+      leafBox.containsPoint(a) &&
+      leafBox.containsPoint(b) &&
+      leafBox.containsPoint(c);
     const target = inside ? buckets.extracted : buckets.kept;
 
     for (const name of names) {

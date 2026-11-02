@@ -12,6 +12,7 @@ import {
   ENDING_GOOD,
   PROLOGUE,
 } from '../config/dialogues';
+import { ACT_START_SPAWNS } from '../config/actSpawns';
 import {
   ACT1_SCORE_BASE,
   ACT_POINTS,
@@ -229,8 +230,15 @@ function withAct(state: StoryState, act1: Act1State, message: string | null): St
 }
 
 /** 幕间只继承总分：重走本幕不设分数上限，失败幕的扣分不会进入总分。 */
-function startAct(state: StoryState, act: ActNo): StoryState {
-  const fresh = { ...createAct1State(state.seed, act), score: state.totalScore };
+function startAct(
+  state: StoryState,
+  act: ActNo,
+  includeOpeningLines = false
+): StoryState {
+  let fresh: Act1State = {
+    ...createAct1State(state.seed, act),
+    score: state.totalScore,
+  };
   // 分数已在序章收口时扣过，这里只补一条可追溯的扣分明细（结局复盘会用到）。
   if (act === 1 && state.policy === 'defer') {
     fresh.deductions = [
@@ -241,6 +249,12 @@ function startAct(state: StoryState, act: ActNo): StoryState {
         points: PROLOGUE_DEFER_PENALTY,
       },
     ];
+  }
+  const openingLines = includeOpeningLines
+    ? ACT_START_SPAWNS[act].cutscene?.openingLines
+    : undefined;
+  if (openingLines && openingLines.length > 0) {
+    fresh = queueAct1Lines(fresh, openingLines);
   }
   return {
     ...state,
@@ -470,7 +484,7 @@ export function storyReducer(state: StoryState, action: StoryAction): StoryState
 
     case 'section-done': {
       if (state.phase !== 'section-card') return state;
-      return startAct(state, state.act);
+      return startAct(state, state.act, true);
     }
 
     case 'act1-action': {

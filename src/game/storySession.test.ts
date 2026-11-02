@@ -187,6 +187,17 @@ test('the score carries across acts and never resets per act', () => {
   assert.equal(s.totalScore, 80);
   s = storyReducer(s, { type: 'section-done' });
   assert.equal(s.act1?.score, 80, 'act 3 starts from the carried total');
+  assert.deepEqual(
+    s.act1?.pendingLines,
+    ['A3-OPEN-1'],
+    '第三幕从幕间卡片进入时自动入队午觉起床自白剧情'
+  );
+  const retriedAct3 = storyReducer(s, { type: 'retry-act' });
+  assert.deepEqual(
+    retriedAct3.act1?.pendingLines,
+    [],
+    '重来第三幕不重播开场 CG 与自白'
+  );
 
   s = { ...s, act1: { ...createQaCompletedAct1(SEED, 3), score: 80 } };
   s = storyReducer(s, { type: 'act-complete' });

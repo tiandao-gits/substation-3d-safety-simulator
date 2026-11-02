@@ -60,7 +60,7 @@ const ELECTROCUTION_SECONDS = 3;
 /** 开场过场：由 App 在幕间切场时写入，runtime 播完自动清空。 */
 export interface CutsceneState {
   script: CutsceneScript;
-  startedAt: number;
+  startedAt: number | null;
   /** 玩家按跳过时置 true：下一帧直接跳到结尾帧并收尾。 */
   skipRequested: boolean;
 }
@@ -469,12 +469,18 @@ export function startSimulationRuntime({
       }
 
       // 开场过场：这一帧的人物位姿、机位与门开度都从时间轴采样一次，后面两处共用。
+      // 必须等 3D 场景着色器预热完成（renderEnabled）再开始计时，避免在加载遮罩后空跑完。
       let cutsceneFrame: CutsceneFrame | null = null;
       const activeCutscene = cutsceneRef.current;
       if (activeCutscene) {
+        if (readiness.renderEnabled && activeCutscene.startedAt === null) {
+          activeCutscene.startedAt = now;
+        }
         const clock = activeCutscene.skipRequested
           ? activeCutscene.script.duration
-          : (now - activeCutscene.startedAt) / 1000;
+          : activeCutscene.startedAt !== null
+            ? (now - activeCutscene.startedAt) / 1000
+            : 0;
         cutsceneFrame = sampleCutscene(activeCutscene.script, clock);
         if (cutsceneFrame.done) {
           cutsceneRef.current = null;

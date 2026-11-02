@@ -10,10 +10,14 @@ interface CutsceneOverlayProps {
 /**
  * 开场过场的电影黑边层。
  *
- * 只做"包装"：上下黑边滑入、左下角场记、右下角跳过。人物走位、机位与门开度
+ * 只做"包装"：上下黑边滑入、左上角场记、右下角跳过。人物走位、机位与门开度
  * 全部由 runtime 的时间轴驱动，这里不参与计时，避免两套时钟对不上。
  */
-export function CutsceneOverlay({ caption, subCaption, onSkip }: CutsceneOverlayProps) {
+export function CutsceneOverlay({
+  caption,
+  subCaption,
+  onSkip,
+}: CutsceneOverlayProps) {
   const [shown, setShown] = useState(false);
 
   useEffect(() => {
@@ -21,10 +25,14 @@ export function CutsceneOverlay({ caption, subCaption, onSkip }: CutsceneOverlay
     return () => cancelAnimationFrame(id);
   }, []);
 
-  // 过场期间只认跳过：Space / Enter / Esc 都能立刻回到操作。
+  // Space / Enter / Esc 都能立刻跳过，不必去点右上角的小按钮。
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.code !== 'Space' && event.code !== 'Enter' && event.code !== 'Escape') {
+      if (
+        event.code !== 'Space' &&
+        event.code !== 'Enter' &&
+        event.code !== 'Escape'
+      ) {
         return;
       }
       event.preventDefault();
@@ -61,7 +69,7 @@ export function CutsceneOverlay({ caption, subCaption, onSkip }: CutsceneOverlay
         </span>
       </div>
 
-      {/* 跳过 */}
+      {/* 跳过：贴在底边黑条上沿右侧 */}
       <button
         type="button"
         onClick={onSkip}

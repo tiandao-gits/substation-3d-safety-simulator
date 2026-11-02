@@ -52,6 +52,7 @@ interface StoryLayerProps {
   dispatch: Dispatch<StoryAction>;
   settings: StorySettings;
   perspective: CameraPerspective;
+  cutsceneActive?: boolean;
   captureEvidence: (
     pointId: Act1PointId,
     reading: string
@@ -72,6 +73,7 @@ export const StoryLayer = forwardRef<StoryLayerHandle, StoryLayerProps>(function
     dispatch,
     settings,
     perspective,
+    cutsceneActive = false,
     captureEvidence,
     onOverlayChange,
     onInspectPointChange,
@@ -184,6 +186,7 @@ export const StoryLayer = forwardRef<StoryLayerHandle, StoryLayerProps>(function
   const bubbleLine = pendingLineId ? ACT1_LINES[pendingLineId] : null;
   const showBubble =
     story.phase === 'act1' &&
+    !cutsceneActive &&
     bubbleLine !== null &&
     !dossierOpen &&
     workbenchPointId === null;

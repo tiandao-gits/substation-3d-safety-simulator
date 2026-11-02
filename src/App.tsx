@@ -214,12 +214,17 @@ export default function App() {
         rig.setFirstPersonMode(false);
       }
       cutsceneRef.current = script
-        ? { script, startedAt: performance.now(), skipRequested: false }
+        ? { script, startedAt: null, skipRequested: false }
         : null;
       setCutscene(
         script ? { caption: script.caption, subCaption: script.subCaption } : null
       );
-      if (script) setPerspective('third-person');
+      if (script) {
+        setPerspective('third-person');
+        if (script.openingLines && script.openingLines.length > 0) {
+          dispatchStory({ type: 'queue-lines', lines: script.openingLines });
+        }
+      }
       envHandlesRef.current?.setStairDoorOpen(0);
       cameraSnapRequestedRef.current = true;
       if (spawn.note) updateBannerMessage(spawn.note);
@@ -792,7 +797,7 @@ export default function App() {
         />
       )}
 
-      {cutscene && (
+      {sceneLoad.status === 'ready' && cutscene && (
         <CutsceneOverlay
           caption={cutscene.caption}
           subCaption={cutscene.subCaption}
@@ -817,13 +822,14 @@ export default function App() {
         onRestart={handleRestartSimulation}
       />
 
-      {gameState !== 'title' && (
+      {gameState !== 'title' && sceneLoad.status === 'ready' && (
         <StoryLayer
           ref={storyLayerRef}
           story={story}
           dispatch={dispatchStory}
           settings={DEFAULT_SETTINGS}
           perspective={perspective}
+          cutsceneActive={cutscene !== null}
           captureEvidence={handleCaptureEvidence}
           onOverlayChange={handleStoryOverlayChange}
           onInspectPointChange={handleInspectPointChange}
