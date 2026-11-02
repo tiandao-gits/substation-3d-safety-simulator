@@ -53,6 +53,10 @@ import {
   type CutsceneFrame,
   type CutsceneScript,
 } from './openingCutscene';
+import {
+  getActiveWorkPermitRoster,
+  getFocusedCrewSlot,
+} from './workPermit';
 
 /** 越线触电后全屏晃动的时长，结束后切入失败黑屏。 */
 const ELECTROCUTION_SECONDS = 3;
@@ -147,7 +151,6 @@ export function startSimulationRuntime({
     envHandles,
     storyProps,
     safetyLines,
-    laserBeam,
     smoothCamPos,
     smoothLookAt,
     readiness,
@@ -172,8 +175,6 @@ export function startSimulationRuntime({
   let shockStartedAt: number | null = null;
   let shockZoneLabel: string | null = null;
   let shockReported = false;
-  /** 激光测距仪射线瞄准 NDC 坐标（指针锁定时固定屏幕中心 0,0；未锁定时跟随鼠标在 3D 视窗移动）。 */
-  const laserAimNdc = { x: 0, y: 0 };
   /** 过场镜号：变化时硬切（不做插值），避免机位穿过墙体。 */
   let cutsceneShotIndex = -1;
   /** 游戏默认机位 FOV 由 sceneSetup 设定，过场结束后恢复。 */
@@ -227,20 +228,6 @@ export function startSimulationRuntime({
       return;
     }
 
-    if (gameStateRef.current === 'playing' && code === 'KeyT') {
-      e.preventDefault();
-      const prevSnap = hudStore.getSnapshot();
-      const nextActive = !prevSnap.laserModeActive;
-      laserBeam.setActive(nextActive);
-      charController.setThermometerLaserActive(nextActive);
-      soundEngine.playLaserMeasure();
-      hudStore.update({
-        laserModeActive: nextActive,
-        laserMeasurement: nextActive ? prevSnap.laserMeasurement : null,
-      });
-      return;
-    }
-
     if (gameStateRef.current === 'playing' && storyOverlayOpenRef.current) {
       return;
     }
@@ -286,12 +273,6 @@ export function startSimulationRuntime({
       e.preventDefault();
       if (playerRef.current.perspective === 'drone') {
         handleTogglePerspective('third-person');
-      } else if (hudStore.getSnapshot().laserModeActive) {
-        const currentMeas = hudStore.getSnapshot().laserMeasurement;
-        if (currentMeas) {
-          soundEngine.playLaserMeasure();
-          hudStore.update({ laserLockedMeasurement: currentMeas });
-        }
       }
     } else if (code === 'KeyB') {
       e.preventDefault();
@@ -344,18 +325,8 @@ export function startSimulationRuntime({
 
   const onMouseMove = (e: MouseEvent) => {
     if (document.pointerLockElement !== renderer.domElement) {
-      // 未锁鼠标但开启了激光测距模式时，允许鼠标在 3D 视窗上移动引导 Raycast 射线
-      if (hudStore.getSnapshot().laserModeActive) {
-        const rect = renderer.domElement.getBoundingClientRect();
-        if (rect.width > 0 && rect.height > 0) {
-          laserAimNdc.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
-          laserAimNdc.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
-        }
-      }
       return;
     }
-    laserAimNdc.x = 0;
-    laserAimNdc.y = 0;
     if (
       gameStateRef.current !== 'playing' ||
       storyOverlayOpenRef.current ||
@@ -850,33 +821,49 @@ export function startSimulationRuntime({
       const focusPointId = activeWorkbenchPointIdRef?.current ?? null;
       charController.root.visible = focusPointId === null;
       if (focusPointId && p.perspective !== 'drone') {
-        const focusPoint = getAct1Point(focusPointId);
-        const dx = p.x - focusPoint.x;
-        const dz = p.z - focusPoint.z;
-        const horizDist = Math.hypot(dx, dz);
-        const ux = horizDist > 0.05 ? dx / horizDist : -Math.sin(p.yaw);
-        const uz = horizDist > 0.05 ? dz / horizDist : -Math.cos(p.yaw);
-        // 视线右向量 (forward x up)，将视线锚点略微向右偏移，使 3D 实景设备落在屏幕左半侧特写区。
-        const rx = uz;
-        const rz = -ux;
-        const camDist = insideApartment ? 1.85 : 2.35;
-        desiredCamPos.set(
-          focusPoint.x + ux * camDist + rx * 0.35,
-          Math.max(p.y + 1.42, focusPoint.focusY + 0.18),
-          focusPoint.z + uz * camDist + rz * 0.35
-        );
-        desiredLookAt.set(
-          focusPoint.x + rx * 0.48,
-          focusPoint.focusY,
-          focusPoint.z + rz * 0.48
-        );
-        if (insideApartment) {
-          const clipped = constrainApartmentCameraPosition(
-            desiredCamPos.x,
-            desiredCamPos.y,
-            desiredCamPos.z
+        if (focusPointId === 'a2-crew') {
+          const focusedSlot = getFocusedCrewSlot();
+          const roster = getActiveWorkPermitRoster();
+          if (focusedSlot !== null && roster.sceneWorkers[focusedSlot]) {
+            const w = roster.sceneWorkers[focusedSlot];
+            const wz = w.act2Position.z;
+            // 单人近景端详：相机拉近至人员正前方 1.62m，并将画面锚点置于左半侧 3D 视窗中央
+            desiredCamPos.set(-18.26, 1.34, wz - 0.44);
+            desiredLookAt.set(-19.88, 1.18, wz - 0.44);
+          } else {
+            // 全列队全景视角：相机位于东侧 (-15.35, 1.52, 17.05) 朝西平视，使 z=16.7~19.9 的整排人员完整落在左栏 3D 视窗内
+            desiredCamPos.set(-15.35, 1.52, 17.05);
+            desiredLookAt.set(-19.88, 1.12, 17.05);
+          }
+        } else {
+          const focusPoint = getAct1Point(focusPointId);
+          const dx = p.x - focusPoint.x;
+          const dz = p.z - focusPoint.z;
+          const horizDist = Math.hypot(dx, dz);
+          const ux = horizDist > 0.05 ? dx / horizDist : -Math.sin(p.yaw);
+          const uz = horizDist > 0.05 ? dz / horizDist : -Math.cos(p.yaw);
+          // 视线右向量 (forward x up)，将视线锚点略微向右偏移，使 3D 实景设备落在屏幕左半侧特写区。
+          const rx = uz;
+          const rz = -ux;
+          const camDist = insideApartment ? 1.85 : 2.35;
+          desiredCamPos.set(
+            focusPoint.x + ux * camDist + rx * 0.35,
+            Math.max(p.y + 1.42, focusPoint.focusY + 0.18),
+            focusPoint.z + uz * camDist + rz * 0.35
           );
-          desiredCamPos.set(clipped.x, clipped.y, clipped.z);
+          desiredLookAt.set(
+            focusPoint.x + rx * 0.48,
+            focusPoint.focusY,
+            focusPoint.z + rz * 0.48
+          );
+          if (insideApartment) {
+            const clipped = constrainApartmentCameraPosition(
+              desiredCamPos.x,
+              desiredCamPos.y,
+              desiredCamPos.z
+            );
+            desiredCamPos.set(clipped.x, clipped.y, clipped.z);
+          }
         }
       } else if (cutsceneFrame && cutsceneRef.current) {
         // 开场过场：机位直接取时间轴的结果，镜号变化时硬切（不做阻尼插值，
@@ -953,28 +940,6 @@ export function startSimulationRuntime({
       }
       camera.updateMatrixWorld();
 
-      // 实时执行 Three.js Raycaster 激光测距计算与 3D 射线绘制
-      const prevHud = hudStore.getSnapshot();
-      const laserActiveNow =
-        prevHud.laserModeActive &&
-        p.perspective !== 'drone' &&
-        !cutsceneFrame &&
-        !shocked;
-      laserBeam.setActive(laserActiveNow);
-      const liveLaserMeas = laserActiveNow
-        ? laserBeam.updateFromRaycast(
-            camera,
-            envHandles.root,
-            p,
-            currentActNo,
-            document.pointerLockElement === renderer.domElement
-              ? { x: 0, y: 0 }
-              : laserAimNdc,
-            Boolean(focusPointId),
-            elapsedRef.current
-          )
-        : null;
-
       hudSyncTimer += dt;
       if (hudSyncTimer >= 0.08) {
         hudSyncTimer = 0;
@@ -1039,9 +1004,6 @@ export function startSimulationRuntime({
           totalCount,
           reviewChances: act1State?.reviewChances ?? ACT1_REVIEW_CHANCES,
           elapsedSeconds: Math.floor(elapsedRef.current),
-          laserModeActive: prevHud.laserModeActive,
-          laserMeasurement: liveLaserMeas,
-          laserLockedMeasurement: prevHud.laserLockedMeasurement,
           spatialSoundLabel: domSound
             ? `${domSound.label} (${panDir} ${domSound.distanceM.toFixed(1)}m)`
             : null,

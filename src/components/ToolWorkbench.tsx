@@ -27,8 +27,6 @@ import { DISPOSITION_PROFILES } from '../config/disposition';
 import { INSPECTION_POINT_DETAILS } from '../config/inspectionDetails';
 import { buildInspectionReadout } from '../config/inspectionReadouts';
 import { BACKPACK_DISPLAY_ITEMS } from '../config/gameText';
-import { hudStore, useHudSnapshot } from '../game/hudStore';
-import { soundEngine } from '../game/sound';
 import type { WorkPermitRoster } from '../game/workPermit';
 import { useFocusTrap } from './useFocusTrap';
 import { ToolSprite } from './ToolSprite';
@@ -98,7 +96,6 @@ export function ToolWorkbench({
 }: ToolWorkbenchProps) {
   const ref = useRef<HTMLDivElement>(null);
   const evidenceRef = useRef<HTMLDivElement>(null);
-  const hud = useHudSnapshot();
   useFocusTrap(ref, true);
 
   const detail = INSPECTION_POINT_DETAILS[point.id];
@@ -113,6 +110,9 @@ export function ToolWorkbench({
     toolId: Act1Tool;
     specs: Act1ActionSpec[];
   } | null>(null);
+  const [permitVerified, setPermitVerified] = useState<boolean>(
+    () => Boolean(disposition)
+  );
 
   useEffect(() => {
     if (!needsEvidence) return;
@@ -225,26 +225,6 @@ export function ToolWorkbench({
               <span>3D 实景特写 · {detail?.bayName ?? point.zone}</span>
             </div>
             <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => {
-                  const next = !hud.laserModeActive;
-                  soundEngine.playLaserMeasure();
-                  hudStore.update({
-                    laserModeActive: next,
-                    laserMeasurement: next ? hud.laserMeasurement : null,
-                  });
-                }}
-                className={`rounded border px-2.5 py-1 font-mono text-[11px] font-bold transition-colors cursor-pointer ${
-                  hud.laserModeActive
-                    ? 'border-red-400 bg-red-950/90 text-red-200 ring-1 ring-red-400/50'
-                    : 'border-sky-500/40 bg-slate-950/85 text-sky-300 hover:border-red-400/70 hover:text-red-200'
-                }`}
-              >
-                {hud.laserModeActive
-                  ? '● Raycast 射线测距已开启 [T]'
-                  : '⊕ 开启 Raycast 射线测距 [T]'}
-              </button>
               <span className="rounded border border-emerald-500/40 bg-emerald-950/80 px-2.5 py-1 font-mono text-[11px] text-emerald-300">
                 可直接点击 3D 视窗靶点实操
               </span>
@@ -334,7 +314,7 @@ export function ToolWorkbench({
 
           {/* Bottom 3D Instrument Telemetry & Scene Clue Card */}
           <div className="space-y-2">
-            {observed && (
+            {observed && (point.id !== 'a2-crew' || permitVerified) && (
               <div className="rounded-lg border border-sky-500/40 bg-slate-950/90 px-4 py-3 text-slate-100 shadow-lg">
                 <div className="flex items-center justify-between gap-2 font-mono text-[11px] text-sky-300">
                   <span className="flex items-center gap-1.5 font-bold">
@@ -468,9 +448,14 @@ export function ToolWorkbench({
                 seed={seed}
                 variant={variant}
                 observed={observed}
-                logDone={completedIds.has('log') || covered}
+                permitVerified={permitVerified}
                 onSyncRosterTo3D={onSyncRosterTo3D}
-                onCompletePermitCheck={() => onToolAction('log', 'log')}
+                onCompletePermitCheck={() => {
+                  setPermitVerified(true);
+                  if (!observed) {
+                    onVisualInspect();
+                  }
+                }}
               />
             )}
 

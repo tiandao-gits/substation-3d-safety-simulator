@@ -8,14 +8,13 @@ import {
 } from '../../game/act1';
 import type { ApartmentDoorSide } from '../../game/apartmentDoor';
 import type { StoryState } from '../../game/storySession';
-import { hudStore, useHudSnapshot } from '../../game/hudStore';
+import { useHudSnapshot } from '../../game/hudStore';
 import { soundEngine } from '../../game/sound';
 import type { CameraPerspective } from '../../game/rules';
 import { SubstationMinimap } from '../../components/SubstationMinimap';
 import { CompassBar } from './CompassBar';
 import { DroneViewfinder } from './DroneViewfinder';
 import { EventToast } from './EventToast';
-import { LaserRangefinderHud } from './LaserRangefinderHud';
 import { ObjectiveTracker } from './ObjectiveTracker';
 import { PromptStack } from './PromptStack';
 import { QuickBar } from './QuickBar';
@@ -64,15 +63,6 @@ export function HudOverlay({
   const hud = useHudSnapshot();
   const isDrone = hud.perspective === 'drone';
   const actActive = story.phase === 'act1' && Boolean(story.act1);
-
-  const handleToggleLaser = () => {
-    const next = !hud.laserModeActive;
-    soundEngine.playLaserMeasure();
-    hudStore.update({
-      laserModeActive: next,
-      laserMeasurement: next ? hud.laserMeasurement : null,
-    });
-  };
 
   const activePoint: Act1PointDef | null = useMemo(() => {
     if (!story.act1 || story.phase !== 'act1') return null;
@@ -161,44 +151,44 @@ export function HudOverlay({
         </>
       ) : (
         <>
-          <CompassBar zoneName={hud.zoneName} yaw={hud.yaw} />
-          <ObjectiveTracker
-            story={story}
-            hud={hud}
-            onOpenSettings={onOpenSettings}
-            onExit={onExit}
-          />
-          <StatusBlock
-            reviewChances={hud.reviewChances}
-            completedCount={hud.completedCount}
-            totalCount={hud.totalCount}
-            progressPercent={hud.progressPercent}
-          />
+          {!storyOverlayOpen && (
+            <>
+              <CompassBar zoneName={hud.zoneName} yaw={hud.yaw} />
+              <ObjectiveTracker
+                story={story}
+                hud={hud}
+                onOpenSettings={onOpenSettings}
+                onExit={onExit}
+              />
+              <StatusBlock
+                reviewChances={hud.reviewChances}
+                completedCount={hud.completedCount}
+                totalCount={hud.totalCount}
+                progressPercent={hud.progressPercent}
+              />
 
-          <div className="absolute bottom-4 left-4 z-20">
-            <SubstationMinimap
-              playerX={hud.x}
-              playerZ={hud.z}
-              playerYaw={hud.yaw}
-              markers={markers}
-              allowTeleport={storyDebug}
-              onTeleport={onDebugTeleport}
-            />
-          </div>
+              <div className="absolute bottom-4 left-4 z-20">
+                <SubstationMinimap
+                  playerX={hud.x}
+                  playerZ={hud.z}
+                  playerYaw={hud.yaw}
+                  markers={markers}
+                  allowTeleport={storyDebug}
+                  onTeleport={onDebugTeleport}
+                />
+              </div>
+            </>
+          )}
 
           {actActive && !storyOverlayOpen && (
             <QuickBar
               runLock={hud.runLock}
-              laserActive={hud.laserModeActive}
               onToggleRunWalk={onToggleRunWalk}
               onOpenDossier={onOpenDossier}
               onEnterDrone={() => onTogglePerspective('drone')}
-              onToggleLaser={handleToggleLaser}
               onOpenBackpack={onOpenBackpack}
             />
           )}
-
-          {actActive && <LaserRangefinderHud />}
 
           {actActive && !storyOverlayOpen && (
             <PromptStack

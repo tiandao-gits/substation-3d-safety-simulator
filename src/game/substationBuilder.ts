@@ -11,8 +11,8 @@ import {
   type ApartmentDoorView,
 } from './apartmentDoorView';
 import {
-  ACT2_CREW_LINEUP_POSITIONS,
   generateWorkPermitRoster,
+  setActiveWorkPermitRoster,
   type CrewWorkerVisualSpec,
   type WorkPermitRoster,
 } from './workPermit';
@@ -151,50 +151,36 @@ export interface SceneLoadCallbacks {
   onError?: (message: string) => void;
 }
 
-interface CrewVisualAttachment {
-  uniformMaterials: THREE.MeshStandardMaterial[];
-  badgeGroup: THREE.Group;
-  badgeCardMat: THREE.MeshStandardMaterial;
-  reflectiveStrips: THREE.Group;
-  overheadSprite: THREE.Sprite;
-  updateLabel: (spec: CrewWorkerVisualSpec) => void;
-}
-
-function createCrewTagTexture(spec: CrewWorkerVisualSpec): THREE.CanvasTexture {
+function createOverheadSlotTexture(
+  spec: CrewWorkerVisualSpec,
+  sceneIndex: number
+): THREE.CanvasTexture {
   const canvas = document.createElement('canvas');
   canvas.width = 256;
   canvas.height = 96;
   const ctx = canvas.getContext('2d');
   if (ctx) {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    const hasIssue =
-      spec.badgeStatus !== 'valid' ||
-      spec.uniformStatus !== 'standard' ||
-      !spec.listedOnPermit;
-    ctx.fillStyle = hasIssue ? 'rgba(69, 10, 10, 0.92)' : 'rgba(9, 21, 34, 0.90)';
-    ctx.strokeStyle = hasIssue ? '#f87171' : '#38bdf8';
+    ctx.fillStyle = 'rgba(9, 21, 34, 0.92)';
+    ctx.strokeStyle = '#38bdf8';
     ctx.lineWidth = 4;
     ctx.beginPath();
     ctx.roundRect(6, 6, canvas.width - 12, canvas.height - 12, 12);
     ctx.fill();
     ctx.stroke();
 
-    ctx.fillStyle = hasIssue ? '#fecaca' : '#bae6fd';
-    ctx.font = 'bold 26px monospace';
+    ctx.fillStyle = '#7dd3fc';
+    ctx.font = 'bold 22px monospace';
     ctx.textBaseline = 'middle';
-    ctx.fillText(`${spec.tagCode} ${spec.name}`, 18, 34);
+    const header =
+      spec.slotIndex === 0
+        ? `列队 #${sceneIndex + 1} · 负责人`
+        : `列队 #${sceneIndex + 1} (${spec.tagCode})`;
+    ctx.fillText(header, 18, 32);
 
-    const badgeLabel =
-      spec.badgeStatus === 'valid'
-        ? '工牌正常'
-        : spec.badgeStatus === 'expired'
-          ? '证件超期'
-          : '无工作证';
-    const clothLabel =
-      spec.uniformStatus === 'standard' ? '标准工装' : '违规便装';
-    ctx.fillStyle = hasIssue ? '#fca5a5' : '#6ee7b7';
-    ctx.font = 'bold 20px sans-serif';
-    ctx.fillText(`${badgeLabel} · ${clothLabel}`, 18, 68);
+    ctx.fillStyle = '#f8fafc';
+    ctx.font = 'bold 26px sans-serif';
+    ctx.fillText(spec.name, 18, 66);
   }
   const tex = new THREE.CanvasTexture(canvas);
   tex.colorSpace = THREE.SRGBColorSpace;
@@ -202,12 +188,105 @@ function createCrewTagTexture(spec: CrewWorkerVisualSpec): THREE.CanvasTexture {
   return tex;
 }
 
-function attachCrewVisualRig(
+function createChestBadgeTexture(
+  spec: CrewWorkerVisualSpec
+): THREE.CanvasTexture {
+  const canvas = document.createElement('canvas');
+  canvas.width = 256;
+  canvas.height = 320;
+  const ctx = canvas.getContext('2d');
+  if (ctx) {
+    const isExpired = spec.badgeStatus === 'expired';
+    ctx.fillStyle = '#f8fafc';
+    ctx.strokeStyle = isExpired ? '#ef4444' : '#10b981';
+    ctx.lineWidth = 14;
+    ctx.beginPath();
+    ctx.roundRect(8, 8, canvas.width - 16, canvas.height - 16, 18);
+    ctx.fill();
+    ctx.stroke();
+
+    // 顶部横幅
+    ctx.fillStyle = isExpired ? '#dc2626' : '#059669';
+    ctx.fillRect(15, 15, canvas.width - 30, 56);
+    ctx.fillStyle = '#ffffff';
+    ctx.font = 'bold 24px sans-serif';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('变电检修工作证', 36, 44);
+
+    // 姓名与编号
+    ctx.fillStyle = '#0f172a';
+    ctx.font = 'bold 34px sans-serif';
+    ctx.fillText(spec.name, 26, 112);
+
+    ctx.fillStyle = '#334155';
+    ctx.font = 'bold 22px monospace';
+    ctx.fillText(spec.empId, 150, 112);
+
+    // 岗位与特种作业证
+    ctx.fillStyle = '#475569';
+    ctx.font = 'bold 20px sans-serif';
+    ctx.fillText(spec.role.slice(0, 10), 26, 158);
+    ctx.fillText(spec.certName.slice(0, 11), 26, 192);
+
+    // 有效期色块（高对比度便于 3D 近景直接辨识）
+    ctx.fillStyle = isExpired ? '#fee2e2' : '#d1fae5';
+    ctx.strokeStyle = isExpired ? '#dc2626' : '#059669';
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.roundRect(22, 222, canvas.width - 44, 72, 10);
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.fillStyle = isExpired ? '#b91c1c' : '#065f46';
+    ctx.font = 'bold 22px monospace';
+    ctx.fillText(`有效期:${spec.certExpiry}`, 34, 248);
+    ctx.font = 'bold 24px sans-serif';
+    ctx.fillText(isExpired ? '【已超期失效】' : '【复审有效】', 42, 278);
+  }
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.needsUpdate = true;
+  return tex;
+}
+
+function decorateSpawnedCrewWorker(
   node: THREE.Object3D,
-  uniformMaterials: THREE.MeshStandardMaterial[],
-  initialSpec: CrewWorkerVisualSpec
-): CrewVisualAttachment {
-  // 计算模型局部包围盒，精确定位胸前工牌与头顶标牌高度（绝不改动人头与安全帽网格）
+  spec: CrewWorkerVisualSpec,
+  sceneIndex: number,
+  showOverheadTag: boolean
+): void {
+  // 1. 独立克隆衣服材质并着色（绝不修改人头与安全帽材质）
+  node.traverse((sub) => {
+    const mesh = sub as THREE.Mesh;
+    if (!mesh.isMesh) return;
+    const mats = Array.isArray(mesh.material)
+      ? [...mesh.material]
+      : [mesh.material];
+    let clonedAny = false;
+    for (let i = 0; i < mats.length; i++) {
+      const m = mats[i] as THREE.MeshStandardMaterial;
+      if (
+        m &&
+        (m.name === 'CLOTH_BLUE.003' ||
+          m.name === 'CLOTH_BLACK_MANAGER' ||
+          m.name === 'CLOTH_ORANGE')
+      ) {
+        const clonedMat = m.clone();
+        clonedMat.map = null;
+        clonedMat.color.setHex(spec.uniformColorHex);
+        clonedMat.roughness = 0.72;
+        clonedMat.metalness = 0.06;
+        clonedMat.needsUpdate = true;
+        mats[i] = clonedMat;
+        clonedAny = true;
+      }
+    }
+    if (clonedAny) {
+      mesh.material = Array.isArray(mesh.material) ? mats : mats[0];
+    }
+  });
+
+  // 计算模型局部包围盒，精确定位胸前工牌与头顶标牌高度
   const localBox = new THREE.Box3();
   node.traverse((child) => {
     const mesh = child as THREE.Mesh;
@@ -221,92 +300,91 @@ function attachCrewVisualRig(
   const minY = Number.isFinite(localBox.min.y) ? localBox.min.y : 0;
   const maxY = Number.isFinite(localBox.max.y) ? localBox.max.y : 1.72;
   const height = Math.max(1.2, maxY - minY);
-  const chestY = minY + height * 0.66;
+  const chestY = minY + height * 0.65;
 
-  // 1. 胸前工作证挂牌（前胸与后背双面可见，便于任何观察角度核查）
-  const badgeGroup = new THREE.Group();
-  badgeGroup.name = `CrewBadge_${node.name}`;
-  badgeGroup.position.set(0, chestY, 0);
+  // 2. 胸前实体工作证挂牌（单面正胸贴挂，消除侧面肋部多余卡片与悬浮圆环）
+  if (spec.badgeStatus !== 'missing' && spec.badgeColorHex !== null) {
+    const badgeGroup = new THREE.Group();
+    badgeGroup.name = `CrewBadge_${spec.nodeName}`;
+    badgeGroup.position.set(0, chestY, 0);
 
-  const badgeCardMat = new THREE.MeshStandardMaterial({
-    color: initialSpec.badgeColorHex ?? 0x10b981,
-    emissive: initialSpec.badgeColorHex ?? 0x10b981,
-    emissiveIntensity: 0.45,
-    roughness: 0.3,
-    metalness: 0.1,
-  });
-  const lanyardMat = new THREE.MeshBasicMaterial({ color: 0x38bdf8 });
+    const cardTex = createChestBadgeTexture(spec);
+    const badgeFaceMat = new THREE.MeshBasicMaterial({
+      map: cardTex,
+    });
+    const badgeRimMat = new THREE.MeshStandardMaterial({
+      color: spec.badgeColorHex,
+      emissive: spec.badgeColorHex,
+      emissiveIntensity: 0.42,
+      roughness: 0.3,
+    });
 
-  // 在角色胸前四向包络面贴挂小工牌，保证无论模型初始局部朝向如何，正面胸口都能清晰看到工作证
-  for (const offset of [
-    { x: 0.06, z: 0.17, ry: 0 },
-    { x: 0.06, z: -0.17, ry: Math.PI },
-    { x: 0.17, z: 0.05, ry: Math.PI / 2 },
-    { x: -0.17, z: 0.05, ry: -Math.PI / 2 },
-  ]) {
-    const card = new THREE.Mesh(
-      new THREE.BoxGeometry(0.085, 0.115, 0.018),
-      badgeCardMat
+    // 模型局部 +X 为正胸朝向（结合 rotY=0.26 朝向东侧相机），将工牌贴在左前胸口袋处
+    const cardHolder = new THREE.Group();
+    cardHolder.position.set(0.148, -0.02, 0.045);
+    cardHolder.rotation.y = Math.PI / 2 - 0.26;
+
+    const backing = new THREE.Mesh(
+      new THREE.BoxGeometry(0.135, 0.168, 0.012),
+      badgeRimMat
     );
-    card.position.set(offset.x, 0, offset.z);
-    card.rotation.y = offset.ry;
-    badgeGroup.add(card);
+    cardHolder.add(backing);
+
+    const frontFace = new THREE.Mesh(
+      new THREE.PlaneGeometry(0.125, 0.156),
+      badgeFaceMat
+    );
+    frontFace.position.z = 0.007;
+    cardHolder.add(frontFace);
+
+    const clipMat = new THREE.MeshBasicMaterial({
+      color: spec.badgeStatus === 'expired' ? 0xf87171 : 0x38bdf8,
+    });
+    const strap = new THREE.Mesh(
+      new THREE.BoxGeometry(0.016, 0.065, 0.008),
+      clipMat
+    );
+    strap.position.set(0, 0.105, 0);
+    cardHolder.add(strap);
+
+    badgeGroup.add(cardHolder);
+    node.add(badgeGroup);
   }
-  const lanyard = new THREE.Mesh(
-    new THREE.TorusGeometry(0.11, 0.008, 6, 16),
-    lanyardMat
-  );
-  lanyard.rotation.x = Math.PI / 2.4;
-  lanyard.position.set(0, 0.09, 0);
-  badgeGroup.add(lanyard);
-  node.add(badgeGroup);
 
-  // 2. 标准工装银色反光胸带（违规便装时隐藏）
-  const reflectiveStrips = new THREE.Group();
-  reflectiveStrips.name = `CrewReflective_${node.name}`;
-  reflectiveStrips.position.set(0, minY + height * 0.58, 0);
-  const stripMat = new THREE.MeshStandardMaterial({
-    color: 0xe2e8f0,
-    emissive: 0x94a3b8,
-    emissiveIntensity: 0.25,
-    roughness: 0.2,
-    metalness: 0.8,
-  });
-  const beltRing = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.175, 0.175, 0.032, 16, 1, true),
-    stripMat
-  );
-  reflectiveStrips.add(beltRing);
-  node.add(reflectiveStrips);
+  // 3. 标准阻燃工装银色反光胸带（违规便装时无反光带）
+  if (spec.uniformStatus === 'standard') {
+    const reflectiveStrips = new THREE.Group();
+    reflectiveStrips.name = `CrewReflective_${spec.nodeName}`;
+    reflectiveStrips.position.set(0, minY + height * 0.56, 0);
+    const stripMat = new THREE.MeshStandardMaterial({
+      color: 0xe2e8f0,
+      emissive: 0x94a3b8,
+      emissiveIntensity: 0.3,
+      roughness: 0.2,
+      metalness: 0.85,
+    });
+    const beltRing = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.178, 0.178, 0.036, 16, 1, true),
+      stripMat
+    );
+    reflectiveStrips.add(beltRing);
+    node.add(reflectiveStrips);
+  }
 
-  // 3. 头顶人员编号与状态标牌 Sprite
-  const spriteMat = new THREE.SpriteMaterial({
-    map: createCrewTagTexture(initialSpec),
-    transparent: true,
-    depthTest: false,
-  });
-  const overheadSprite = new THREE.Sprite(spriteMat);
-  overheadSprite.name = `CrewOverheadTag_${node.name}`;
-  overheadSprite.position.set(0, maxY + 0.26, 0);
-  overheadSprite.scale.set(0.76, 0.285, 1);
-  overheadSprite.renderOrder = 12;
-  node.add(overheadSprite);
-
-  const updateLabel = (spec: CrewWorkerVisualSpec) => {
-    const oldMap = spriteMat.map;
-    spriteMat.map = createCrewTagTexture(spec);
-    spriteMat.needsUpdate = true;
-    oldMap?.dispose();
-  };
-
-  return {
-    uniformMaterials,
-    badgeGroup,
-    badgeCardMat,
-    reflectiveStrips,
-    overheadSprite,
-    updateLabel,
-  };
+  // 4. 头顶中立列队编号牌（仅显示列队序号与姓名，不剧透缺陷）
+  if (showOverheadTag) {
+    const spriteMat = new THREE.SpriteMaterial({
+      map: createOverheadSlotTexture(spec, sceneIndex),
+      transparent: true,
+      depthTest: false,
+    });
+    const overheadSprite = new THREE.Sprite(spriteMat);
+    overheadSprite.name = `CrewOverheadTag_${spec.nodeName}`;
+    overheadSprite.position.set(0, maxY + 0.24, 0);
+    overheadSprite.scale.set(0.54, 0.2, 1);
+    overheadSprite.renderOrder = 12;
+    node.add(overheadSprite);
+  }
 }
 
 export function buildSubstationEnvironment(
@@ -314,11 +392,6 @@ export function buildSubstationEnvironment(
   textures: SubstationTextures,
   enableShadows: boolean,
   loadCallbacks?: SceneLoadCallbacks,
-  /**
-   * 贴图各向异性过滤等级。道路、场坪这类大面积水平面在玩家视角下被极度斜视，
-   * anisotropy=1 时远处 mipmap 采样不足，走动中会持续出现纹理摩尔纹（抖动闪动），
-   * 走近后角度变垂直才恢复正常。用渲染器上限封顶到 8 兼顾画质与采样开销。
-   */
   maxAnisotropy = 8
 ): SubstationSceneHandles {
   const root = new THREE.Group();
@@ -339,18 +412,19 @@ export function buildSubstationEnvironment(
   customPropsGroup.name = 'ImportedBlenderProps';
   root.add(customPropsGroup);
 
-  /**
-   * 公寓楼梯间的玻璃门：门扇直接从 GLB 里切出来（见 stairDoorRig.ts），
-   * 不额外补门 —— 模型本来就有这扇门，补一扇必然穿帮。
-   * 这里只保留铰链开度状态；铰链本体在模型加载完成后才创建。
-   */
+  const dynamicCrewDetailedGroup = new THREE.Group();
+  dynamicCrewDetailedGroup.name = 'DynamicCrewDetailedGroup';
+  detailedGroup.add(dynamicCrewDetailedGroup);
+
+  const dynamicCrewClayGroup = new THREE.Group();
+  dynamicCrewClayGroup.name = 'DynamicCrewClayGroup';
+  blockoutGroup.add(dynamicCrewClayGroup);
+
   let stairDoorRigs: StairDoorRig[] = [];
   let stairDoorOpen = 0;
   const applyStairDoor = () => {
     for (const rig of stairDoorRigs) rig.setOpen(stairDoorOpen);
   };
-  // GLB 的楼梯间只有自发光灯罩、没有实际光源，开场镜头里楼梯与人物都是黑的；
-  // 补一盏暖光把楼梯井照亮（只补光，不改任何几何）。
   const stairLight = new THREE.PointLight(0xffe3b8, 2.2, 9, 2);
   stairLight.name = 'STAIR_LIGHT';
   stairLight.position.set(33.0, 2.5, -19.8);
@@ -363,23 +437,18 @@ export function buildSubstationEnvironment(
   });
   let currentDetailMode: RenderDetailMode = 'detailed';
   let currentAct: 1 | 2 | 3 = 1;
-  const act2CrewNodes: THREE.Object3D[] = [];
   const act3UnsafeNodes: THREE.Object3D[] = [];
-  /** 检修班组在第二幕（班前会列队）的原始位姿，切回第二幕时复位。 */
-  const crewHome = new Map<
-    THREE.Object3D,
-    { x: number; y: number; z: number; rotY: number }
-  >();
-  const crewAttachments = new Map<string, CrewVisualAttachment>();
-  let currentCrewRoster: WorkPermitRoster = generateWorkPermitRoster(1024, 'A', 0);
+  let leaderTemplate: THREE.Object3D | null = null;
+  let workerTemplate: THREE.Object3D | null = null;
+  let currentCrewRoster: WorkPermitRoster = generateWorkPermitRoster(
+    1024,
+    'A',
+    0
+  );
   let apartmentDoorView: ApartmentDoorView | null = null;
   let apartmentDoorOpenRequested = false;
   let loadedOriginal: THREE.Object3D | null = null;
 
-  /**
-   * 第三幕岗位：班组不随幕次撤场，只是从集合列队转到 1# 主变本体东侧作业面继续干活。
-   * 1# 主变 AABB 为 x −31.09…−25.63 / z 15.22…22.39，班组站在本体东侧约 1 m 的检修通道上。
-   */
   const ACT3_CREW_POSTS: Array<{ x: number; z: number }> = [
     { x: -25.3, z: 16.9 },
     { x: -25.25, z: 19.6 },
@@ -389,62 +458,71 @@ export function buildSubstationEnvironment(
   const ACT3_MANAGER_POST = { x: -23.4, z: 19.3 };
 
   const syncCrewVisualsWithRoster = () => {
-    const specMap = new Map<string, CrewWorkerVisualSpec>();
-    specMap.set(currentCrewRoster.leader.nodeName, currentCrewRoster.leader);
-    for (const w of currentCrewRoster.workers) {
-      specMap.set(w.nodeName, w);
-    }
+    dynamicCrewDetailedGroup.clear();
+    dynamicCrewClayGroup.clear();
 
     const showAct2Crew = currentAct === 2 || currentAct === 3;
     const showAct3Unsafe = currentAct === 3;
-    let workerIndex = 0;
-
-    for (const node of act2CrewNodes) {
-      const spec = specMap.get(node.name);
-      const present = spec ? spec.presentOnSite : true;
-      node.visible = showAct2Crew && present;
-
-      const home = crewHome.get(node);
-      if (home) {
-        if (currentAct === 3) {
-          const post =
-            node.name === 'MEMBER_02'
-              ? ACT3_MANAGER_POST
-              : ACT3_CREW_POSTS[workerIndex++ % ACT3_CREW_POSTS.length];
-          node.position.set(post.x, home.y, post.z);
-          if (node.name !== 'MEMBER_02') {
-            node.rotation.y = home.rotY + Math.PI;
-          }
-        } else {
-          node.position.set(home.x, home.y, home.z);
-          node.rotation.y = home.rotY;
-        }
-      }
-    }
-
-    for (const [nodeName, attachment] of crewAttachments.entries()) {
-      const spec = specMap.get(nodeName);
-      if (!spec) continue;
-      for (const mat of attachment.uniformMaterials) {
-        mat.color.setHex(spec.uniformColorHex);
-        mat.needsUpdate = true;
-      }
-      if (spec.badgeColorHex === null || spec.badgeStatus === 'missing') {
-        attachment.badgeGroup.visible = false;
-      } else {
-        attachment.badgeGroup.visible = true;
-        attachment.badgeCardMat.color.setHex(spec.badgeColorHex);
-        attachment.badgeCardMat.emissive.setHex(spec.badgeColorHex);
-        attachment.badgeCardMat.needsUpdate = true;
-      }
-      attachment.reflectiveStrips.visible = spec.uniformStatus === 'standard';
-      attachment.overheadSprite.visible = currentAct === 2;
-      attachment.updateLabel(spec);
-    }
+    dynamicCrewDetailedGroup.visible = showAct2Crew;
+    dynamicCrewClayGroup.visible = showAct2Crew;
 
     for (const node of act3UnsafeNodes) {
       node.visible = showAct3Unsafe;
     }
+
+    if (!leaderTemplate || !workerTemplate || !showAct2Crew) {
+      return;
+    }
+
+    const facingEastRotation = workerTemplate.rotation;
+    let act3WorkerIdx = 0;
+
+    currentCrewRoster.sceneWorkers.forEach((spec, idx) => {
+      const baseTemplate =
+        spec.slotIndex === 0 ? leaderTemplate! : workerTemplate!;
+      const detailedWorker = baseTemplate.clone(true);
+      detailedWorker.visible = true;
+      detailedWorker.name = `DYNAMIC_${spec.nodeName}`;
+
+      if (currentAct === 3) {
+        const post =
+          spec.slotIndex === 0
+            ? ACT3_MANAGER_POST
+            : ACT3_CREW_POSTS[act3WorkerIdx++ % ACT3_CREW_POSTS.length];
+        detailedWorker.position.set(post.x, spec.act2Position.y, post.z);
+        detailedWorker.rotation.copy(facingEastRotation);
+        if (spec.slotIndex !== 0) {
+          detailedWorker.rotation.y += Math.PI;
+        }
+      } else {
+        detailedWorker.position.set(
+          spec.act2Position.x,
+          spec.act2Position.y,
+          spec.act2Position.z
+        );
+        // 全员统一朝向东侧（+X）面对监理相机，方便玩家直观核对人数、工牌与工装
+        detailedWorker.rotation.copy(facingEastRotation);
+      }
+
+      decorateSpawnedCrewWorker(
+        detailedWorker,
+        spec,
+        idx,
+        currentAct === 2
+      );
+      dynamicCrewDetailedGroup.add(detailedWorker);
+
+      const clayWorker = baseTemplate.clone(true);
+      clayWorker.visible = true;
+      clayWorker.position.copy(detailedWorker.position);
+      clayWorker.rotation.copy(detailedWorker.rotation);
+      clayWorker.traverse((c) => {
+        if ((c as THREE.Mesh).isMesh) {
+          (c as THREE.Mesh).material = clayMaterial;
+        }
+      });
+      dynamicCrewClayGroup.add(clayWorker);
+    });
   };
 
   const applyActCharacterVisibility = () => {
@@ -466,9 +544,6 @@ export function buildSubstationEnvironment(
     const original = gltf.scene;
     original.name = 'BlenderSubstationOriginalLayout';
     loadedOriginal = original;
-    // glTF cannot carry Blender's procedural/base-color node graphs: several
-    // site materials ship as untinted default white. Restore their intended
-    // tones. Grass uses embedded PBR maps and deliberately has no flat-color fallback.
     const materialTints: Record<string, number> = {
       'MAT_STEEL.001': 0x8d959d,
       'MAT_DARK_STEEL.001': 0x2b3037,
@@ -482,15 +557,16 @@ export function buildSubstationEnvironment(
       }
       if ((child as THREE.Mesh).isMesh) {
         const mesh = child as THREE.Mesh;
-        // Far-field scenery: alpha cards would cast solid-quad shadows in the shadow map.
         const scenery = mesh.name.startsWith('EXT_CONIFER');
         mesh.castShadow = enableShadows && !scenery;
         mesh.receiveShadow = enableShadows && !scenery;
-        // 路面标线与沥青路面几乎共面（中心虚线只高出 5mm，危险区红线只高出 2cm），
-        // 远处深度缓冲精度不足会让两者交替赢得深度测试，表现为路面标记闪烁抖动。
-        // 给标线单独 clone 一份材质并加 polygonOffset，让它们稳定压在路面上。
-        if (mesh.name === 'Road_CenterDashes' || mesh.name === 'BAY_DANGER_LINE_220KV') {
-          const source = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+        if (
+          mesh.name === 'Road_CenterDashes' ||
+          mesh.name === 'BAY_DANGER_LINE_220KV'
+        ) {
+          const source = Array.isArray(mesh.material)
+            ? mesh.material
+            : [mesh.material];
           const decals = source.map((entry) => {
             const decal = entry.clone();
             decal.polygonOffset = true;
@@ -501,12 +577,11 @@ export function buildSubstationEnvironment(
           });
           mesh.material = Array.isArray(mesh.material) ? decals : decals[0];
         }
-        const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+        const materials = Array.isArray(mesh.material)
+          ? mesh.material
+          : [mesh.material];
         for (const material of materials) {
           const standard = material as THREE.MeshStandardMaterial;
-          // 统一提升各向异性过滤等级。GLB 默认全部是 anisotropy=1，道路/场坪这类
-          // 大面积水平面在玩家低视角下被极度斜视，mipmap 采样不足会持续抖动闪烁，
-          // 只有走近（视角变垂直）才看起来正常。
           if (standard) {
             for (const tex of [
               standard.map,
@@ -521,7 +596,6 @@ export function buildSubstationEnvironment(
               tex.needsUpdate = true;
             }
           }
-          // Blender 5.2 cannot export alphaMode MASK, so the leaf cards arrive alpha-blended.
           if (standard?.name === 'MAT_CONIFER_LEAVES') {
             standard.transparent = false;
             standard.alphaTest = 0.3;
@@ -533,7 +607,11 @@ export function buildSubstationEnvironment(
             standard.metalness = 0;
             standard.roughness = 1;
             if (standard.normalMap) standard.normalScale.set(0.75, 0.75);
-            for (const map of [standard.map, standard.normalMap, standard.roughnessMap]) {
+            for (const map of [
+              standard.map,
+              standard.normalMap,
+              standard.roughnessMap,
+            ]) {
               if (!map) continue;
               map.wrapS = THREE.RepeatWrapping;
               map.wrapT = THREE.RepeatWrapping;
@@ -545,7 +623,6 @@ export function buildSubstationEnvironment(
             standard.color.setHex(tint);
             standard.needsUpdate = true;
           }
-          // 1# 主变旁（x≈-18.5, z≈17.4）的 MEMBER_02 为项目经理王振，将其服装（CLOTH_ORANGE）更换为黑色项目经理工装，保留法线与粗糙度褶皱细节。
           if (standard?.name === 'CLOTH_ORANGE') {
             standard.name = 'CLOTH_BLACK_MANAGER';
             standard.map = null;
@@ -573,76 +650,31 @@ export function buildSubstationEnvironment(
       }
     });
 
-    act2CrewNodes.length = 0;
     act3UnsafeNodes.length = 0;
-    crewHome.clear();
-    crewAttachments.clear();
 
-    const specMap = new Map<string, CrewWorkerVisualSpec>();
-    specMap.set(currentCrewRoster.leader.nodeName, currentCrewRoster.leader);
-    for (const w of currentCrewRoster.workers) {
-      specMap.set(w.nodeName, w);
+    // 提取负责人模板（MEMBER_02）与班组成员模板（MEMBER_01001），并隐藏原始静态重叠节点
+    const rawLeader = original.getObjectByName('MEMBER_02');
+    const rawWorker =
+      original.getObjectByName('MEMBER_01001') ??
+      original.children.find((c) => c.name.startsWith('MEMBER_01'));
+    if (rawLeader) {
+      leaderTemplate = rawLeader.clone(true);
+    }
+    if (rawWorker) {
+      workerTemplate = rawWorker.clone(true);
     }
 
     for (const rootGroup of [original, clay]) {
       for (const child of rootGroup.children) {
         if (child.name.startsWith('MEMBER_01') || child.name === 'MEMBER_02') {
-          const lineupPos =
-            ACT2_CREW_LINEUP_POSITIONS[
-              child.name as keyof typeof ACT2_CREW_LINEUP_POSITIONS
-            ];
-          if (lineupPos) {
-            child.position.set(lineupPos.x, lineupPos.y, lineupPos.z);
-          }
-          act2CrewNodes.push(child);
-          crewHome.set(child, {
-            x: child.position.x,
-            y: child.position.y,
-            z: child.position.z,
-            rotY: child.rotation.y,
-          });
-
-          // 在精细材质组中，为每位作业人员独立克隆服装材质（仅克隆衣服材质，保留头盔/头部原材质）并挂载 3D 胸牌与编号标牌
-          if (rootGroup === original) {
-            const uniformMats: THREE.MeshStandardMaterial[] = [];
-            child.traverse((sub) => {
-              const mesh = sub as THREE.Mesh;
-              if (!mesh.isMesh) return;
-              const mats = Array.isArray(mesh.material)
-                ? [...mesh.material]
-                : [mesh.material];
-              let clonedAny = false;
-              for (let i = 0; i < mats.length; i++) {
-                const m = mats[i] as THREE.MeshStandardMaterial;
-                if (
-                  m &&
-                  (m.name === 'CLOTH_BLUE.003' ||
-                    m.name === 'CLOTH_BLACK_MANAGER' ||
-                    m.name === 'CLOTH_ORANGE')
-                ) {
-                  const clonedMat = m.clone();
-                  mats[i] = clonedMat;
-                  uniformMats.push(clonedMat);
-                  clonedAny = true;
-                }
-              }
-              if (clonedAny) {
-                mesh.material = Array.isArray(mesh.material) ? mats : mats[0];
-              }
-            });
-            const spec = specMap.get(child.name);
-            if (spec) {
-              crewAttachments.set(
-                child.name,
-                attachCrewVisualRig(child, uniformMats, spec)
-              );
-            }
-          }
+          child.visible = false;
         } else if (child.name.startsWith('MEMBER_UNSAFE')) {
           act3UnsafeNodes.push(child);
         }
       }
     }
+
+    setActiveWorkPermitRoster(currentCrewRoster);
     syncCrewVisualsWithRoster();
 
     detailedGroup.add(original);
@@ -714,6 +746,7 @@ export function buildSubstationEnvironment(
     },
     applyWorkPermitRoster(roster: WorkPermitRoster) {
       currentCrewRoster = roster;
+      setActiveWorkPermitRoster(roster);
       syncCrewVisualsWithRoster();
     },
     setApartmentDoorOpen(open: boolean) {

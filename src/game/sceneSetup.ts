@@ -14,7 +14,6 @@ import {
   type RenderDetailMode,
 } from './rules';
 import { createSafetyLines, type SafetyLineHandles } from './safetyLines';
-import { createLaserBeamRig, type LaserBeamRig } from './laserBeamRig';
 import { createAct1StoryProps, type Act1StoryProps } from './storyProps';
 import {
   buildSubstationEnvironment,
@@ -52,7 +51,6 @@ export interface SubstationSceneInstance {
   envHandles: SubstationSceneHandles;
   storyProps: Act1StoryProps;
   safetyLines: SafetyLineHandles;
-  laserBeam: LaserBeamRig;
   debugOverlay: StoryDebugOverlay | null;
   smoothCamPos: THREE.Vector3;
   smoothLookAt: THREE.Vector3;
@@ -416,9 +414,6 @@ export function createSubstationScene({
   const safetyLines = createSafetyLines();
   scene.add(safetyLines.group);
 
-  const laserBeam = createLaserBeamRig();
-  scene.add(laserBeam.group);
-
   let debugOverlay: StoryDebugOverlay | null = null;
   if (storyDebug) {
     debugOverlay = createStoryDebugOverlay();
@@ -447,7 +442,6 @@ export function createSubstationScene({
     isSceneDisposed = true;
     storyProps.dispose();
     safetyLines.dispose();
-    laserBeam.dispose();
     debugOverlay?.dispose();
     skyboxPanoramaTexture?.dispose();
     textures.dispose();
@@ -463,7 +457,6 @@ export function createSubstationScene({
     envHandles,
     storyProps,
     safetyLines,
-    laserBeam,
     debugOverlay,
     smoothCamPos,
     smoothLookAt,

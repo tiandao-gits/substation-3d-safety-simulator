@@ -1,7 +1,6 @@
 import { useSyncExternalStore } from 'react';
 import { GAME_TEXT, SAFETY_LABELS } from '../config/gameText';
 import { ACT1_REVIEW_CHANCES } from './act1';
-import type { LaserMeasurementResult } from './laserRangefinder';
 import type {
   CameraPerspective,
   MixamoMotionState,
@@ -45,12 +44,6 @@ export interface HudSnapshot {
   totalCount: number;
   reviewChances: number;
   elapsedSeconds: number;
-  /** 是否开启 3D 实时射线测距模式（快捷键 T 或快捷栏按钮） */
-  laserModeActive: boolean;
-  /** 实时 Raycast 射线测距结果 */
-  laserMeasurement: LaserMeasurementResult | null;
-  /** 最近一次按左键/锁定键保存的实测数据 */
-  laserLockedMeasurement: LaserMeasurementResult | null;
   /** 当前最显著的 3D 空间异响/电晕声源描述 */
   spatialSoundLabel: string | null;
   /** 当前显著 3D 声源的双耳声像 (-1 左 .. +1 右) */
@@ -89,9 +82,6 @@ export const INITIAL_HUD_SNAPSHOT: HudSnapshot = {
   totalCount: 3,
   reviewChances: ACT1_REVIEW_CHANCES,
   elapsedSeconds: 0,
-  laserModeActive: false,
-  laserMeasurement: null,
-  laserLockedMeasurement: null,
   spatialSoundLabel: null,
   spatialSoundPan: 0,
 };
