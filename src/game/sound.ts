@@ -1,11 +1,203 @@
 import { BGM_TRACKS, type BgmKey } from '../config/audio';
 
+export interface SpatialListenerInput {
+  x: number;
+  z: number;
+  yaw: number;
+  act: 1 | 2 | 3;
+  variant: string | null;
+  active: boolean;
+}
+
+export interface SpatialEmitterState {
+  id: 'corona-220kv' | 'pd-10kv' | 'equip-anomaly';
+  label: string;
+  x: number;
+  z: number;
+  distanceM: number;
+  /** 归一化响度权重 0..1 */
+  intensity: number;
+  /** 立体声声像 -1（左耳）.. +1（右耳） */
+  pan: number;
+  /** 是否处于缺陷强化异响状态 */
+  isDefectAmplified: boolean;
+}
+
+export interface SpatialSoundSnapshot {
+  corona: SpatialEmitterState;
+  partialDischarge: SpatialEmitterState;
+  equipmentAnomaly: SpatialEmitterState;
+  dominantEmitter: SpatialEmitterState | null;
+}
+
+/**
+ * 根据玩家朝向 yaw 与声源坐标计算立体声声像 pan (-1 左声道 .. +1 右声道)。
+ * 游戏中角色面朝方向为 (-sin(yaw), -cos(yaw))，右侧方向为 (cos(yaw), -sin(yaw))。
+ */
+export function computeStereoPan(
+  listenerX: number,
+  listenerZ: number,
+  listenerYaw: number,
+  sourceX: number,
+  sourceZ: number
+): number {
+  const dx = sourceX - listenerX;
+  const dz = sourceZ - listenerZ;
+  const dist = Math.hypot(dx, dz);
+  if (dist < 0.05) return 0;
+  const rightX = Math.cos(listenerYaw);
+  const rightZ = -Math.sin(listenerYaw);
+  const dotRight = (dx / dist) * rightX + (dz / dist) * rightZ;
+  return Math.max(-1, Math.min(1, Math.round(dotRight * 100) / 100));
+}
+
+/**
+ * 纯函数计算变电站 3D 空间声场（220kV 电晕放电声、10kV 开关柜局部放电异响、主变/配电箱设备异响）。
+ */
+export function computeSpatialSoundState(
+  input: SpatialListenerInput
+): SpatialSoundSnapshot {
+  const { x, z, yaw, act, variant } = input;
+
+  // 1. 220kV 配电装置区电晕放电声（选取 F02 线夹测点与 F03 间隔中点中的较近声源）
+  const coronaCandidates = [
+    { x: 4.9, z: 21.6, label: '220kV 间隔母线/线夹电晕放电声', defect: act === 1 && variant === 'B' },
+    { x: 12.1, z: 7.4, label: '220kV 高压架空母线电晕声', defect: false },
+  ];
+  let bestCorona = coronaCandidates[0];
+  let minCoronaDist = Math.hypot(x - bestCorona.x, z - bestCorona.z);
+  for (const c of coronaCandidates.slice(1)) {
+    const d = Math.hypot(x - c.x, z - c.z);
+    if (d < minCoronaDist) {
+      minCoronaDist = d;
+      bestCorona = c;
+    }
+  }
+  const coronaRadius = bestCorona.defect ? 26 : 20;
+  const rawCorona = Math.max(0, Math.min(1, 1 - minCoronaDist / coronaRadius));
+  const coronaIntensity = Math.min(
+    1,
+    Math.pow(rawCorona, 1.35) * (bestCorona.defect ? 1.45 : 0.85)
+  );
+  const corona: SpatialEmitterState = {
+    id: 'corona-220kv',
+    label: bestCorona.defect
+      ? '220kV 间隔 B 相过热线夹电晕放电异响'
+      : bestCorona.label,
+    x: bestCorona.x,
+    z: bestCorona.z,
+    distanceM: Math.round(minCoronaDist * 10) / 10,
+    intensity: Math.round(coronaIntensity * 1000) / 1000,
+    pan: computeStereoPan(x, z, yaw, bestCorona.x, bestCorona.z),
+    isDefectAmplified: bestCorona.defect,
+  };
+
+  // 2. 10kV 高压配电室开关柜局部放电与母排电磁异响
+  const pdX = 35.2;
+  const pdZ = -22.4;
+  const pdDist = Math.hypot(x - pdX, z - pdZ);
+  const pdDefect = act === 1 && variant === 'C';
+  const pdRadius = pdDefect ? 16 : 11;
+  const rawPd = Math.max(0, Math.min(1, 1 - pdDist / pdRadius));
+  const pdIntensity = Math.min(
+    1,
+    Math.pow(rawPd, 1.4) * (pdDefect ? 1.5 : 0.75)
+  );
+  const partialDischarge: SpatialEmitterState = {
+    id: 'pd-10kv',
+    label: pdDefect
+      ? '10kV 开关柜穿墙套管局部放电异响'
+      : '10kV 开关柜工频电磁嗡鸣',
+    x: pdX,
+    z: pdZ,
+    distanceM: Math.round(pdDist * 10) / 10,
+    intensity: Math.round(pdIntensity * 1000) / 1000,
+    pan: computeStereoPan(x, z, yaw, pdX, pdZ),
+    isDefectAmplified: pdDefect,
+  };
+
+  // 3. 设备本体异响（第二幕 1#主变阀门渗油/风扇异响，第三幕施工区配电箱电火花滋滋异响，或运行主变磁致伸缩声）
+  const equipSource =
+    act === 3
+      ? {
+          x: -22.1,
+          z: -21.7,
+          label:
+            variant === 'C'
+              ? '施工区二级配电箱接触不良电火花异响'
+              : '施工区临时配电箱运行嗡鸣',
+          defect: variant === 'C',
+          radius: 16,
+        }
+      : act === 2
+        ? {
+            x: -26.2,
+            z: 18.8,
+            label:
+              variant === 'C'
+                ? '1# 主变散热器蝶阀渗油与呼吸器异响'
+                : '邻近 2# 运行主变低频磁致伸缩声',
+            defect: variant === 'C',
+            radius: 18,
+          }
+        : {
+            x: -28.36,
+            z: 6.94,
+            label: '220kV 运行主变铁芯磁致伸缩轰鸣',
+            defect: false,
+            radius: 22,
+          };
+
+  const equipDist = Math.hypot(x - equipSource.x, z - equipSource.z);
+  const rawEquip = Math.max(0, Math.min(1, 1 - equipDist / equipSource.radius));
+  const equipIntensity = Math.min(
+    1,
+    Math.pow(rawEquip, 1.3) * (equipSource.defect ? 1.4 : 0.8)
+  );
+  const equipmentAnomaly: SpatialEmitterState = {
+    id: 'equip-anomaly',
+    label: equipSource.label,
+    x: equipSource.x,
+    z: equipSource.z,
+    distanceM: Math.round(equipDist * 10) / 10,
+    intensity: Math.round(equipIntensity * 1000) / 1000,
+    pan: computeStereoPan(x, z, yaw, equipSource.x, equipSource.z),
+    isDefectAmplified: equipSource.defect,
+  };
+
+  const candidates = [corona, partialDischarge, equipmentAnomaly].filter(
+    (e) => e.intensity >= 0.08
+  );
+  candidates.sort((a, b) => b.intensity - a.intensity);
+
+  return {
+    corona,
+    partialDischarge,
+    equipmentAnomaly,
+    dominantEmitter: candidates[0] ?? null,
+  };
+}
+
 // Procedural Web Audio API Synthesizer for Substation 3D Simulation
 class SubstationAudioEngine {
   private ctx: AudioContext | null = null;
   private humOsc1: OscillatorNode | null = null;
   private humOsc2: OscillatorNode | null = null;
   private humGain: GainNode | null = null;
+
+  // 3D 空间电晕放电噪声链 (Bandpass filtered noise + 100Hz AC corona modulation + StereoPanner)
+  private coronaSource: AudioBufferSourceNode | null = null;
+  private coronaGain: GainNode | null = null;
+  private coronaPanner: StereoPannerNode | null = null;
+  private coronaModOsc: OscillatorNode | null = null;
+
+  // 3D 空间设备异响/局部放电合成链 (150Hz/300Hz harmonic + StereoPanner)
+  private anomalyOsc: OscillatorNode | null = null;
+  private anomalyGain: GainNode | null = null;
+  private anomalyPanner: StereoPannerNode | null = null;
+  private lastCrackleAt = 0;
+  private lastSpatialSnapshot: SpatialSoundSnapshot | null = null;
+
   private bgmAudio: HTMLAudioElement | null = null;
   private bgmKey: BgmKey | null = null;
   private bgmWanted: BgmKey | null = null;
@@ -16,7 +208,10 @@ class SubstationAudioEngine {
   private ensureContext(): AudioContext | null {
     if (this.muted || typeof window === 'undefined') return null;
     if (!this.ctx) {
-      const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+      const AudioCtx =
+        window.AudioContext ||
+        (window as unknown as { webkitAudioContext: typeof AudioContext })
+          .webkitAudioContext;
       if (AudioCtx) {
         this.ctx = new AudioCtx();
       }
@@ -49,12 +244,113 @@ class SubstationAudioEngine {
 
       this.humOsc1.start();
       this.humOsc2.start();
+      this.ensureSpatialNodes(ctx);
     } catch {
       // Ignore autoplay errors until user gesture
     }
   }
 
-  public updateTransformerProximity(minDistanceToTransformer: number, active: boolean) {
+  private ensureSpatialNodes(ctx: AudioContext) {
+    if (this.coronaGain) return;
+    try {
+      // 创建 2 秒循环的高频电晕白噪声缓冲
+      const sampleRate = ctx.sampleRate || 44100;
+      const bufferLength = sampleRate * 2;
+      const noiseBuffer = ctx.createBuffer(1, bufferLength, sampleRate);
+      const data = noiseBuffer.getChannelData(0);
+      for (let i = 0; i < bufferLength; i++) {
+        // 带有轻微脉冲毛刺的电晕噪声基底
+        const spike = Math.random() > 0.985 ? (Math.random() - 0.5) * 2.8 : 0;
+        data[i] = (Math.random() * 2 - 1) * 0.35 + spike;
+      }
+
+      const noise = ctx.createBufferSource();
+      noise.buffer = noiseBuffer;
+      noise.loop = true;
+
+      const bandpass = ctx.createBiquadFilter();
+      bandpass.type = 'bandpass';
+      bandpass.frequency.value = 3400;
+      bandpass.Q.value = 2.4;
+
+      const modGain = ctx.createGain();
+      modGain.gain.value = 0.7;
+
+      // 100Hz 工频倍频电晕调制
+      const modOsc = ctx.createOscillator();
+      modOsc.type = 'sawtooth';
+      modOsc.frequency.value = 100;
+      const modDepth = ctx.createGain();
+      modDepth.gain.value = 0.3;
+      modOsc.connect(modDepth);
+      modDepth.connect(modGain.gain);
+
+      const coronaGain = ctx.createGain();
+      coronaGain.gain.value = 0;
+
+      const coronaPanner =
+        typeof ctx.createStereoPanner === 'function'
+          ? ctx.createStereoPanner()
+          : null;
+
+      noise.connect(bandpass);
+      bandpass.connect(modGain);
+      modGain.connect(coronaGain);
+      if (coronaPanner) {
+        coronaGain.connect(coronaPanner);
+        coronaPanner.connect(ctx.destination);
+      } else {
+        coronaGain.connect(ctx.destination);
+      }
+
+      noise.start();
+      modOsc.start();
+
+      this.coronaSource = noise;
+      this.coronaGain = coronaGain;
+      this.coronaPanner = coronaPanner;
+      this.coronaModOsc = modOsc;
+
+      // 创建局部放电/设备异响谐波通道
+      const anomalyOsc = ctx.createOscillator();
+      anomalyOsc.type = 'sawtooth';
+      anomalyOsc.frequency.value = 150;
+
+      const anomalyFilter = ctx.createBiquadFilter();
+      anomalyFilter.type = 'bandpass';
+      anomalyFilter.frequency.value = 420;
+      anomalyFilter.Q.value = 3.0;
+
+      const anomalyGain = ctx.createGain();
+      anomalyGain.gain.value = 0;
+
+      const anomalyPanner =
+        typeof ctx.createStereoPanner === 'function'
+          ? ctx.createStereoPanner()
+          : null;
+
+      anomalyOsc.connect(anomalyFilter);
+      anomalyFilter.connect(anomalyGain);
+      if (anomalyPanner) {
+        anomalyGain.connect(anomalyPanner);
+        anomalyPanner.connect(ctx.destination);
+      } else {
+        anomalyGain.connect(ctx.destination);
+      }
+
+      anomalyOsc.start();
+      this.anomalyOsc = anomalyOsc;
+      this.anomalyGain = anomalyGain;
+      this.anomalyPanner = anomalyPanner;
+    } catch {
+      // Ignore Web Audio node creation errors on restricted runtimes
+    }
+  }
+
+  public updateTransformerProximity(
+    minDistanceToTransformer: number,
+    active: boolean
+  ) {
     if (!this.humGain || !this.ctx) return;
     if (!active || this.muted) {
       this.humGain.gain.setTargetAtTime(0, this.ctx.currentTime, 0.1);
@@ -66,7 +362,115 @@ class SubstationAudioEngine {
     this.humGain.gain.setTargetAtTime(targetGain, this.ctx.currentTime, 0.12);
   }
 
-  public playFootstep(surface: 'concrete-road' | 'gravel-yard' | 'plaza', isRunning: boolean) {
+  /**
+   * 实时更新 3D 空间音效（220kV 电晕放电声、10kV 局部放电声、施工配电箱/主变异响），
+   * 按玩家坐标与视角朝向动态调节双耳声像（StereoPanner）与距离衰减。
+   */
+  public updateSpatialAudio(input: SpatialListenerInput): SpatialSoundSnapshot {
+    const snapshot = computeSpatialSoundState(input);
+    this.lastSpatialSnapshot = snapshot;
+
+    if (!this.ctx || this.muted || !input.active) {
+      if (this.ctx && this.coronaGain) {
+        this.coronaGain.gain.setTargetAtTime(0, this.ctx.currentTime, 0.08);
+      }
+      if (this.ctx && this.anomalyGain) {
+        this.anomalyGain.gain.setTargetAtTime(0, this.ctx.currentTime, 0.08);
+      }
+      return snapshot;
+    }
+
+    this.ensureSpatialNodes(this.ctx);
+    const now = this.ctx.currentTime;
+
+    // 1. 更新 220kV 电晕放电通道
+    if (this.coronaGain) {
+      const targetCoronaGain = snapshot.corona.intensity * 0.042;
+      this.coronaGain.gain.setTargetAtTime(targetCoronaGain, now, 0.1);
+    }
+    if (this.coronaPanner) {
+      this.coronaPanner.pan.setTargetAtTime(snapshot.corona.pan, now, 0.08);
+    }
+
+    // 2. 更新 10kV 局部放电 / 设备异响通道（取两者中较强的一个驱动谐波异响通道）
+    const strongerAnomaly =
+      snapshot.partialDischarge.intensity >= snapshot.equipmentAnomaly.intensity
+        ? snapshot.partialDischarge
+        : snapshot.equipmentAnomaly;
+
+    if (this.anomalyGain && this.anomalyOsc) {
+      const targetAnomalyGain = strongerAnomaly.intensity * 0.028;
+      this.anomalyGain.gain.setTargetAtTime(targetAnomalyGain, now, 0.1);
+      const targetFreq =
+        strongerAnomaly.id === 'pd-10kv'
+          ? strongerAnomaly.isDefectAmplified
+            ? 200
+            : 100
+          : strongerAnomaly.isDefectAmplified
+            ? 150
+            : 100;
+      this.anomalyOsc.frequency.setTargetAtTime(targetFreq, now, 0.12);
+    }
+    if (this.anomalyPanner) {
+      this.anomalyPanner.pan.setTargetAtTime(strongerAnomaly.pan, now, 0.08);
+    }
+
+    // 3. 当靠近存在过热/电弧缺陷的测点时，间歇触发短促高频电晕“噼啪”脉冲声
+    const dominant = snapshot.dominantEmitter;
+    if (
+      dominant &&
+      dominant.intensity > 0.38 &&
+      (dominant.id === 'corona-220kv' || dominant.isDefectAmplified)
+    ) {
+      const intervalSec = dominant.isDefectAmplified ? 0.55 : 1.35;
+      if (now - this.lastCrackleAt > intervalSec && Math.random() < 0.35) {
+        this.lastCrackleAt = now;
+        this.playCoronaCrackle(dominant.intensity * 0.032, dominant.pan);
+      }
+    }
+
+    return snapshot;
+  }
+
+  public getLastSpatialSnapshot(): SpatialSoundSnapshot | null {
+    return this.lastSpatialSnapshot;
+  }
+
+  /** 短促的 3D 电晕放电“滋啦/噼啪”脉冲声（带左右声像定位）。 */
+  private playCoronaCrackle(gainLevel: number, pan: number) {
+    const ctx = this.ctx;
+    if (!ctx || this.muted) return;
+    try {
+      const now = ctx.currentTime;
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(2400 + Math.random() * 1800, now);
+      osc.frequency.exponentialRampToValueAtTime(680, now + 0.038);
+      gain.gain.setValueAtTime(Math.min(0.05, gainLevel), now);
+      gain.gain.exponentialRampToValueAtTime(0.0005, now + 0.042);
+
+      if (typeof ctx.createStereoPanner === 'function') {
+        const panner = ctx.createStereoPanner();
+        panner.pan.setValueAtTime(pan, now);
+        osc.connect(gain);
+        gain.connect(panner);
+        panner.connect(ctx.destination);
+      } else {
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+      }
+      osc.start(now);
+      osc.stop(now + 0.045);
+    } catch {
+      // Ignore transient synthesis error
+    }
+  }
+
+  public playFootstep(
+    surface: 'concrete-road' | 'gravel-yard' | 'plaza',
+    isRunning: boolean
+  ) {
     const ctx = this.ensureContext();
     if (!ctx) return;
     const now = ctx.currentTime;
@@ -197,7 +601,10 @@ class SubstationAudioEngine {
       const gain = ctx.createGain();
       osc.type = isOverheated ? 'square' : 'sine';
       osc.frequency.setValueAtTime(freq, now + idx * 0.065);
-      gain.gain.setValueAtTime(isOverheated ? 0.045 : 0.032, now + idx * 0.065);
+      gain.gain.setValueAtTime(
+        isOverheated ? 0.045 : 0.032,
+        now + idx * 0.065
+      );
       gain.gain.exponentialRampToValueAtTime(0.0008, now + idx * 0.065 + 0.06);
       osc.connect(gain);
       gain.connect(ctx.destination);
@@ -463,6 +870,12 @@ class SubstationAudioEngine {
     if (this.muted) {
       if (this.humGain && this.ctx) {
         this.humGain.gain.setTargetAtTime(0, this.ctx.currentTime, 0.05);
+      }
+      if (this.coronaGain && this.ctx) {
+        this.coronaGain.gain.setTargetAtTime(0, this.ctx.currentTime, 0.05);
+      }
+      if (this.anomalyGain && this.ctx) {
+        this.anomalyGain.gain.setTargetAtTime(0, this.ctx.currentTime, 0.05);
       }
       this.disposeBgm();
     } else {

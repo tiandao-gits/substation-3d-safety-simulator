@@ -10,6 +10,12 @@ import {
   createApartmentDoorView,
   type ApartmentDoorView,
 } from './apartmentDoorView';
+import {
+  ACT2_CREW_LINEUP_POSITIONS,
+  generateWorkPermitRoster,
+  type CrewWorkerVisualSpec,
+  type WorkPermitRoster,
+} from './workPermit';
 
 /** 由 `scripts/split-glb.ts` 生成的 GLB 分片清单。 */
 interface GlbPartsManifest {
@@ -124,6 +130,7 @@ export interface SubstationSceneHandles {
   customPropsGroup: THREE.Group;
   setRenderDetailMode: (mode: RenderDetailMode) => void;
   setActCharacterVisibility: (act: 1 | 2 | 3) => void;
+  applyWorkPermitRoster: (roster: WorkPermitRoster) => void;
   setApartmentDoorOpen: (open: boolean) => void;
   setStairDoorOpen: (open01: number) => void;
   updateApartmentDoor: (dt: number) => void;
@@ -142,6 +149,164 @@ export interface SceneLoadCallbacks {
   onProgress?: (loadedBytes: number, totalBytes: number) => void;
   onLoaded?: () => void;
   onError?: (message: string) => void;
+}
+
+interface CrewVisualAttachment {
+  uniformMaterials: THREE.MeshStandardMaterial[];
+  badgeGroup: THREE.Group;
+  badgeCardMat: THREE.MeshStandardMaterial;
+  reflectiveStrips: THREE.Group;
+  overheadSprite: THREE.Sprite;
+  updateLabel: (spec: CrewWorkerVisualSpec) => void;
+}
+
+function createCrewTagTexture(spec: CrewWorkerVisualSpec): THREE.CanvasTexture {
+  const canvas = document.createElement('canvas');
+  canvas.width = 256;
+  canvas.height = 96;
+  const ctx = canvas.getContext('2d');
+  if (ctx) {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    const hasIssue =
+      spec.badgeStatus !== 'valid' ||
+      spec.uniformStatus !== 'standard' ||
+      !spec.listedOnPermit;
+    ctx.fillStyle = hasIssue ? 'rgba(69, 10, 10, 0.92)' : 'rgba(9, 21, 34, 0.90)';
+    ctx.strokeStyle = hasIssue ? '#f87171' : '#38bdf8';
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.roundRect(6, 6, canvas.width - 12, canvas.height - 12, 12);
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.fillStyle = hasIssue ? '#fecaca' : '#bae6fd';
+    ctx.font = 'bold 26px monospace';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(`${spec.tagCode} ${spec.name}`, 18, 34);
+
+    const badgeLabel =
+      spec.badgeStatus === 'valid'
+        ? '工牌正常'
+        : spec.badgeStatus === 'expired'
+          ? '证件超期'
+          : '无工作证';
+    const clothLabel =
+      spec.uniformStatus === 'standard' ? '标准工装' : '违规便装';
+    ctx.fillStyle = hasIssue ? '#fca5a5' : '#6ee7b7';
+    ctx.font = 'bold 20px sans-serif';
+    ctx.fillText(`${badgeLabel} · ${clothLabel}`, 18, 68);
+  }
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.needsUpdate = true;
+  return tex;
+}
+
+function attachCrewVisualRig(
+  node: THREE.Object3D,
+  uniformMaterials: THREE.MeshStandardMaterial[],
+  initialSpec: CrewWorkerVisualSpec
+): CrewVisualAttachment {
+  // 计算模型局部包围盒，精确定位胸前工牌与头顶标牌高度（绝不改动人头与安全帽网格）
+  const localBox = new THREE.Box3();
+  node.traverse((child) => {
+    const mesh = child as THREE.Mesh;
+    if (mesh.isMesh && mesh.geometry) {
+      mesh.geometry.computeBoundingBox();
+      if (mesh.geometry.boundingBox) {
+        localBox.union(mesh.geometry.boundingBox);
+      }
+    }
+  });
+  const minY = Number.isFinite(localBox.min.y) ? localBox.min.y : 0;
+  const maxY = Number.isFinite(localBox.max.y) ? localBox.max.y : 1.72;
+  const height = Math.max(1.2, maxY - minY);
+  const chestY = minY + height * 0.66;
+
+  // 1. 胸前工作证挂牌（前胸与后背双面可见，便于任何观察角度核查）
+  const badgeGroup = new THREE.Group();
+  badgeGroup.name = `CrewBadge_${node.name}`;
+  badgeGroup.position.set(0, chestY, 0);
+
+  const badgeCardMat = new THREE.MeshStandardMaterial({
+    color: initialSpec.badgeColorHex ?? 0x10b981,
+    emissive: initialSpec.badgeColorHex ?? 0x10b981,
+    emissiveIntensity: 0.45,
+    roughness: 0.3,
+    metalness: 0.1,
+  });
+  const lanyardMat = new THREE.MeshBasicMaterial({ color: 0x38bdf8 });
+
+  // 在角色胸前四向包络面贴挂小工牌，保证无论模型初始局部朝向如何，正面胸口都能清晰看到工作证
+  for (const offset of [
+    { x: 0.06, z: 0.17, ry: 0 },
+    { x: 0.06, z: -0.17, ry: Math.PI },
+    { x: 0.17, z: 0.05, ry: Math.PI / 2 },
+    { x: -0.17, z: 0.05, ry: -Math.PI / 2 },
+  ]) {
+    const card = new THREE.Mesh(
+      new THREE.BoxGeometry(0.085, 0.115, 0.018),
+      badgeCardMat
+    );
+    card.position.set(offset.x, 0, offset.z);
+    card.rotation.y = offset.ry;
+    badgeGroup.add(card);
+  }
+  const lanyard = new THREE.Mesh(
+    new THREE.TorusGeometry(0.11, 0.008, 6, 16),
+    lanyardMat
+  );
+  lanyard.rotation.x = Math.PI / 2.4;
+  lanyard.position.set(0, 0.09, 0);
+  badgeGroup.add(lanyard);
+  node.add(badgeGroup);
+
+  // 2. 标准工装银色反光胸带（违规便装时隐藏）
+  const reflectiveStrips = new THREE.Group();
+  reflectiveStrips.name = `CrewReflective_${node.name}`;
+  reflectiveStrips.position.set(0, minY + height * 0.58, 0);
+  const stripMat = new THREE.MeshStandardMaterial({
+    color: 0xe2e8f0,
+    emissive: 0x94a3b8,
+    emissiveIntensity: 0.25,
+    roughness: 0.2,
+    metalness: 0.8,
+  });
+  const beltRing = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.175, 0.175, 0.032, 16, 1, true),
+    stripMat
+  );
+  reflectiveStrips.add(beltRing);
+  node.add(reflectiveStrips);
+
+  // 3. 头顶人员编号与状态标牌 Sprite
+  const spriteMat = new THREE.SpriteMaterial({
+    map: createCrewTagTexture(initialSpec),
+    transparent: true,
+    depthTest: false,
+  });
+  const overheadSprite = new THREE.Sprite(spriteMat);
+  overheadSprite.name = `CrewOverheadTag_${node.name}`;
+  overheadSprite.position.set(0, maxY + 0.26, 0);
+  overheadSprite.scale.set(0.76, 0.285, 1);
+  overheadSprite.renderOrder = 12;
+  node.add(overheadSprite);
+
+  const updateLabel = (spec: CrewWorkerVisualSpec) => {
+    const oldMap = spriteMat.map;
+    spriteMat.map = createCrewTagTexture(spec);
+    spriteMat.needsUpdate = true;
+    oldMap?.dispose();
+  };
+
+  return {
+    uniformMaterials,
+    badgeGroup,
+    badgeCardMat,
+    reflectiveStrips,
+    overheadSprite,
+    updateLabel,
+  };
 }
 
 export function buildSubstationEnvironment(
@@ -205,6 +370,8 @@ export function buildSubstationEnvironment(
     THREE.Object3D,
     { x: number; y: number; z: number; rotY: number }
   >();
+  const crewAttachments = new Map<string, CrewVisualAttachment>();
+  let currentCrewRoster: WorkPermitRoster = generateWorkPermitRoster(1024, 'A', 0);
   let apartmentDoorView: ApartmentDoorView | null = null;
   let apartmentDoorOpenRequested = false;
   let loadedOriginal: THREE.Object3D | null = null;
@@ -221,34 +388,67 @@ export function buildSubstationEnvironment(
   ];
   const ACT3_MANAGER_POST = { x: -23.4, z: 19.3 };
 
-  const applyActCharacterVisibility = () => {
-    // 第三幕是下午的施工区检查，上午的检修班组仍在 1# 主变上作业，不能凭空消失。
+  const syncCrewVisualsWithRoster = () => {
+    const specMap = new Map<string, CrewWorkerVisualSpec>();
+    specMap.set(currentCrewRoster.leader.nodeName, currentCrewRoster.leader);
+    for (const w of currentCrewRoster.workers) {
+      specMap.set(w.nodeName, w);
+    }
+
     const showAct2Crew = currentAct === 2 || currentAct === 3;
     const showAct3Unsafe = currentAct === 3;
     let workerIndex = 0;
+
     for (const node of act2CrewNodes) {
-      node.visible = showAct2Crew;
+      const spec = specMap.get(node.name);
+      const present = spec ? spec.presentOnSite : true;
+      node.visible = showAct2Crew && present;
+
       const home = crewHome.get(node);
-      if (!home) continue;
-      if (currentAct === 3) {
-        const post =
-          node.name === 'MEMBER_02'
-            ? ACT3_MANAGER_POST
-            : ACT3_CREW_POSTS[workerIndex++ % ACT3_CREW_POSTS.length];
-        // 只挪岗位，不强行统一朝向：各成员模型基准朝向不同，硬套同一个 yaw
-        // 会出现有人背对作业面的情况；工人整体转 180° 面向主变本体，班组长保持监工朝向。
-        node.position.set(post.x, home.y, post.z);
-        if (node.name !== 'MEMBER_02') {
-          node.rotation.y = home.rotY + Math.PI;
+      if (home) {
+        if (currentAct === 3) {
+          const post =
+            node.name === 'MEMBER_02'
+              ? ACT3_MANAGER_POST
+              : ACT3_CREW_POSTS[workerIndex++ % ACT3_CREW_POSTS.length];
+          node.position.set(post.x, home.y, post.z);
+          if (node.name !== 'MEMBER_02') {
+            node.rotation.y = home.rotY + Math.PI;
+          }
+        } else {
+          node.position.set(home.x, home.y, home.z);
+          node.rotation.y = home.rotY;
         }
-      } else {
-        node.position.set(home.x, home.y, home.z);
-        node.rotation.y = home.rotY;
       }
     }
+
+    for (const [nodeName, attachment] of crewAttachments.entries()) {
+      const spec = specMap.get(nodeName);
+      if (!spec) continue;
+      for (const mat of attachment.uniformMaterials) {
+        mat.color.setHex(spec.uniformColorHex);
+        mat.needsUpdate = true;
+      }
+      if (spec.badgeColorHex === null || spec.badgeStatus === 'missing') {
+        attachment.badgeGroup.visible = false;
+      } else {
+        attachment.badgeGroup.visible = true;
+        attachment.badgeCardMat.color.setHex(spec.badgeColorHex);
+        attachment.badgeCardMat.emissive.setHex(spec.badgeColorHex);
+        attachment.badgeCardMat.needsUpdate = true;
+      }
+      attachment.reflectiveStrips.visible = spec.uniformStatus === 'standard';
+      attachment.overheadSprite.visible = currentAct === 2;
+      attachment.updateLabel(spec);
+    }
+
     for (const node of act3UnsafeNodes) {
       node.visible = showAct3Unsafe;
     }
+  };
+
+  const applyActCharacterVisibility = () => {
+    syncCrewVisualsWithRoster();
   };
 
   // 墙外地形：外围地面 + 远景山脊 + 场外道路，消除「悬浮半空」感
@@ -376,9 +576,24 @@ export function buildSubstationEnvironment(
     act2CrewNodes.length = 0;
     act3UnsafeNodes.length = 0;
     crewHome.clear();
+    crewAttachments.clear();
+
+    const specMap = new Map<string, CrewWorkerVisualSpec>();
+    specMap.set(currentCrewRoster.leader.nodeName, currentCrewRoster.leader);
+    for (const w of currentCrewRoster.workers) {
+      specMap.set(w.nodeName, w);
+    }
+
     for (const rootGroup of [original, clay]) {
       for (const child of rootGroup.children) {
         if (child.name.startsWith('MEMBER_01') || child.name === 'MEMBER_02') {
+          const lineupPos =
+            ACT2_CREW_LINEUP_POSITIONS[
+              child.name as keyof typeof ACT2_CREW_LINEUP_POSITIONS
+            ];
+          if (lineupPos) {
+            child.position.set(lineupPos.x, lineupPos.y, lineupPos.z);
+          }
           act2CrewNodes.push(child);
           crewHome.set(child, {
             x: child.position.x,
@@ -386,12 +601,49 @@ export function buildSubstationEnvironment(
             z: child.position.z,
             rotY: child.rotation.y,
           });
+
+          // 在精细材质组中，为每位作业人员独立克隆服装材质（仅克隆衣服材质，保留头盔/头部原材质）并挂载 3D 胸牌与编号标牌
+          if (rootGroup === original) {
+            const uniformMats: THREE.MeshStandardMaterial[] = [];
+            child.traverse((sub) => {
+              const mesh = sub as THREE.Mesh;
+              if (!mesh.isMesh) return;
+              const mats = Array.isArray(mesh.material)
+                ? [...mesh.material]
+                : [mesh.material];
+              let clonedAny = false;
+              for (let i = 0; i < mats.length; i++) {
+                const m = mats[i] as THREE.MeshStandardMaterial;
+                if (
+                  m &&
+                  (m.name === 'CLOTH_BLUE.003' ||
+                    m.name === 'CLOTH_BLACK_MANAGER' ||
+                    m.name === 'CLOTH_ORANGE')
+                ) {
+                  const clonedMat = m.clone();
+                  mats[i] = clonedMat;
+                  uniformMats.push(clonedMat);
+                  clonedAny = true;
+                }
+              }
+              if (clonedAny) {
+                mesh.material = Array.isArray(mesh.material) ? mats : mats[0];
+              }
+            });
+            const spec = specMap.get(child.name);
+            if (spec) {
+              crewAttachments.set(
+                child.name,
+                attachCrewVisualRig(child, uniformMats, spec)
+              );
+            }
+          }
         } else if (child.name.startsWith('MEMBER_UNSAFE')) {
           act3UnsafeNodes.push(child);
         }
       }
     }
-    applyActCharacterVisibility();
+    syncCrewVisualsWithRoster();
 
     detailedGroup.add(original);
     blockoutGroup.add(clay);
@@ -459,6 +711,10 @@ export function buildSubstationEnvironment(
       if (currentAct === act) return;
       currentAct = act;
       applyActCharacterVisibility();
+    },
+    applyWorkPermitRoster(roster: WorkPermitRoster) {
+      currentCrewRoster = roster;
+      syncCrewVisualsWithRoster();
     },
     setApartmentDoorOpen(open: boolean) {
       apartmentDoorOpenRequested = open;

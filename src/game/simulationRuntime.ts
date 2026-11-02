@@ -147,6 +147,7 @@ export function startSimulationRuntime({
     envHandles,
     storyProps,
     safetyLines,
+    laserBeam,
     smoothCamPos,
     smoothLookAt,
     readiness,
@@ -171,6 +172,8 @@ export function startSimulationRuntime({
   let shockStartedAt: number | null = null;
   let shockZoneLabel: string | null = null;
   let shockReported = false;
+  /** 激光测距仪射线瞄准 NDC 坐标（指针锁定时固定屏幕中心 0,0；未锁定时跟随鼠标在 3D 视窗移动）。 */
+  const laserAimNdc = { x: 0, y: 0 };
   /** 过场镜号：变化时硬切（不做插值），避免机位穿过墙体。 */
   let cutsceneShotIndex = -1;
   /** 游戏默认机位 FOV 由 sceneSetup 设定，过场结束后恢复。 */
@@ -224,6 +227,20 @@ export function startSimulationRuntime({
       return;
     }
 
+    if (gameStateRef.current === 'playing' && code === 'KeyT') {
+      e.preventDefault();
+      const prevSnap = hudStore.getSnapshot();
+      const nextActive = !prevSnap.laserModeActive;
+      laserBeam.setActive(nextActive);
+      charController.setThermometerLaserActive(nextActive);
+      soundEngine.playLaserMeasure();
+      hudStore.update({
+        laserModeActive: nextActive,
+        laserMeasurement: nextActive ? prevSnap.laserMeasurement : null,
+      });
+      return;
+    }
+
     if (gameStateRef.current === 'playing' && storyOverlayOpenRef.current) {
       return;
     }
@@ -269,6 +286,12 @@ export function startSimulationRuntime({
       e.preventDefault();
       if (playerRef.current.perspective === 'drone') {
         handleTogglePerspective('third-person');
+      } else if (hudStore.getSnapshot().laserModeActive) {
+        const currentMeas = hudStore.getSnapshot().laserMeasurement;
+        if (currentMeas) {
+          soundEngine.playLaserMeasure();
+          hudStore.update({ laserLockedMeasurement: currentMeas });
+        }
       }
     } else if (code === 'KeyB') {
       e.preventDefault();
@@ -320,7 +343,19 @@ export function startSimulationRuntime({
   };
 
   const onMouseMove = (e: MouseEvent) => {
-    if (document.pointerLockElement !== renderer.domElement) return;
+    if (document.pointerLockElement !== renderer.domElement) {
+      // 未锁鼠标但开启了激光测距模式时，允许鼠标在 3D 视窗上移动引导 Raycast 射线
+      if (hudStore.getSnapshot().laserModeActive) {
+        const rect = renderer.domElement.getBoundingClientRect();
+        if (rect.width > 0 && rect.height > 0) {
+          laserAimNdc.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+          laserAimNdc.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+        }
+      }
+      return;
+    }
+    laserAimNdc.x = 0;
+    laserAimNdc.y = 0;
     if (
       gameStateRef.current !== 'playing' ||
       storyOverlayOpenRef.current ||
@@ -735,6 +770,16 @@ export function startSimulationRuntime({
       const storyAct1Active = storyRef.current.phase === 'act1';
       const currentActNo = act1State?.act ?? storyRef.current.act;
       envHandles.setActCharacterVisibility(currentActNo);
+
+      // 实时更新 3D 空间音效（220kV 电晕放电声、10kV 局部放电声、施工区配电箱/主变异响）
+      const spatialAudio = soundEngine.updateSpatialAudio({
+        x: p.x,
+        z: p.z,
+        yaw: p.yaw,
+        act: currentActNo,
+        variant: act1State?.variant ?? null,
+        active: !cutsceneFrame && !shocked,
+      });
       const nearAct = act1State
         ? findNearestOpenAct1Point(
             p.x,
@@ -908,6 +953,28 @@ export function startSimulationRuntime({
       }
       camera.updateMatrixWorld();
 
+      // 实时执行 Three.js Raycaster 激光测距计算与 3D 射线绘制
+      const prevHud = hudStore.getSnapshot();
+      const laserActiveNow =
+        prevHud.laserModeActive &&
+        p.perspective !== 'drone' &&
+        !cutsceneFrame &&
+        !shocked;
+      laserBeam.setActive(laserActiveNow);
+      const liveLaserMeas = laserActiveNow
+        ? laserBeam.updateFromRaycast(
+            camera,
+            envHandles.root,
+            p,
+            currentActNo,
+            document.pointerLockElement === renderer.domElement
+              ? { x: 0, y: 0 }
+              : laserAimNdc,
+            Boolean(focusPointId),
+            elapsedRef.current
+          )
+        : null;
+
       hudSyncTimer += dt;
       if (hudSyncTimer >= 0.08) {
         hudSyncTimer = 0;
@@ -927,6 +994,15 @@ export function startSimulationRuntime({
           p.z,
           act1State?.act ?? storyRef.current.act
         );
+        const domSound = spatialAudio.dominantEmitter;
+        const panDir =
+          domSound === null
+            ? ''
+            : domSound.pan < -0.25
+              ? '左耳方向'
+              : domSound.pan > 0.25
+                ? '右耳方向'
+                : '正前方';
         hudStore.set({
           x: p.x,
           y: p.y,
@@ -963,6 +1039,13 @@ export function startSimulationRuntime({
           totalCount,
           reviewChances: act1State?.reviewChances ?? ACT1_REVIEW_CHANCES,
           elapsedSeconds: Math.floor(elapsedRef.current),
+          laserModeActive: prevHud.laserModeActive,
+          laserMeasurement: liveLaserMeas,
+          laserLockedMeasurement: prevHud.laserLockedMeasurement,
+          spatialSoundLabel: domSound
+            ? `${domSound.label} (${panDir} ${domSound.distanceM.toFixed(1)}m)`
+            : null,
+          spatialSoundPan: domSound ? domSound.pan : 0,
         });
       }
     }

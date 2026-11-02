@@ -33,6 +33,7 @@ import {
 } from '../game/storySession';
 import type { CameraPerspective } from '../game/rules';
 import { soundEngine } from '../game/sound';
+import type { WorkPermitRoster } from '../game/workPermit';
 import { DossierModal } from './DossierModal';
 import { EndingStub } from './EndingStub';
 import { StoryBubble } from './StoryBubble';
@@ -57,6 +58,7 @@ interface StoryLayerProps {
     pointId: Act1PointId,
     reading: string
   ) => CaptureEvidenceResult;
+  onSyncRosterTo3D?: (roster: WorkPermitRoster) => void;
   onOverlayChange: (open: boolean) => void;
   onInspectPointChange?: (pointId: Act1PointId | null) => void;
   onChatChange: (active: boolean) => void;
@@ -75,6 +77,7 @@ export const StoryLayer = forwardRef<StoryLayerHandle, StoryLayerProps>(function
     perspective,
     cutsceneActive = false,
     captureEvidence,
+    onSyncRosterTo3D,
     onOverlayChange,
     onInspectPointChange,
     onChatChange,
@@ -318,6 +321,7 @@ export const StoryLayer = forwardRef<StoryLayerHandle, StoryLayerProps>(function
       {story.phase === 'act1' && point && (
         <ToolWorkbench
           point={point}
+          seed={story.seed}
           variant={story.act1?.variant}
           covered={covered}
           observed={Boolean(pointState?.completedActions.includes('visual'))}
@@ -340,6 +344,7 @@ export const StoryLayer = forwardRef<StoryLayerHandle, StoryLayerProps>(function
           readings={pointState?.readings ?? []}
           reviewChances={story.act1?.reviewChances ?? 0}
           message={story.message}
+          onSyncRosterTo3D={onSyncRosterTo3D}
           onToolAction={(tool, actionId) => {
             if (actionId === 'invalid') {
               soundEngine.playHazardWarning();

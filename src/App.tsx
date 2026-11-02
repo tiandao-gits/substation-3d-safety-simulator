@@ -55,6 +55,10 @@ import {
   storyReducer,
 } from './game/storySession';
 import { hudStore } from './game/hudStore';
+import {
+  generateWorkPermitRoster,
+  type WorkPermitRoster,
+} from './game/workPermit';
 import { useGamePointerLock } from './hooks/useGamePointerLock';
 import { useStoryBootstrap } from './hooks/useStoryBootstrap';
 import { HudOverlay } from './ui/hud/HudOverlay';
@@ -736,6 +740,20 @@ export default function App() {
           ).length}`
         : `第 ${story.act} 幕准备中`;
 
+  const handleSyncRosterTo3D = useCallback((roster: WorkPermitRoster) => {
+    envHandlesRef.current?.applyWorkPermitRoster(roster);
+  }, []);
+
+  useEffect(() => {
+    if (sceneLoad.status !== 'ready') return;
+    const defaultRoster = generateWorkPermitRoster(
+      story.seed,
+      story.act1?.variant ?? 'A',
+      0
+    );
+    envHandlesRef.current?.applyWorkPermitRoster(defaultRoster);
+  }, [sceneLoad.status, story.seed, story.act1?.variant]);
+
   const handleToggleMute = useCallback(() => {
     setIsMuted(soundEngine.toggleMute());
   }, []);
@@ -831,6 +849,7 @@ export default function App() {
           perspective={perspective}
           cutsceneActive={cutscene !== null}
           captureEvidence={handleCaptureEvidence}
+          onSyncRosterTo3D={handleSyncRosterTo3D}
           onOverlayChange={handleStoryOverlayChange}
           onInspectPointChange={handleInspectPointChange}
           onChatChange={handleChatChange}

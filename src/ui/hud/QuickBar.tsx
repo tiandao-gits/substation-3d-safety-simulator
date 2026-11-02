@@ -1,23 +1,27 @@
-import { BookOpen, Briefcase, Footprints, Plane } from 'lucide-react';
+import { BookOpen, Briefcase, Crosshair, Footprints, Plane } from 'lucide-react';
 import { HudPanel } from '../primitives/HudPanel';
 
 interface QuickBarProps {
   runLock: boolean;
+  laserActive?: boolean;
   onToggleRunWalk: () => void;
   onOpenDossier: () => void;
   onEnterDrone: () => void;
+  onToggleLaser?: () => void;
   onOpenBackpack: () => void;
 }
 
 const ITEM_BASE =
   'flex h-[56px] w-[78px] flex-col items-center justify-center rounded-lg border transition-colors cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400/60';
 
-/** 合并后的底部快捷栏：跑动 / 备忘录 / 无人机 / 背包。 */
+/** 合并后的底部快捷栏：跑动 / 备忘录 / 射线测距 / 无人机 / 背包。 */
 export function QuickBar({
   runLock,
+  laserActive = false,
   onToggleRunWalk,
   onOpenDossier,
   onEnterDrone,
+  onToggleLaser,
   onOpenBackpack,
 }: QuickBarProps) {
   return (
@@ -55,6 +59,28 @@ export function QuickBar({
             E
           </span>
         </button>
+
+        {onToggleLaser && (
+          <button
+            type="button"
+            onClick={onToggleLaser}
+            aria-pressed={laserActive}
+            title="开启 / 关闭 3D 射线实测安全距离（T）"
+            className={`${ITEM_BASE} ${
+              laserActive
+                ? 'border-red-400 bg-red-500/25 text-red-200'
+                : 'border-slate-700/80 bg-[#091522]/90 text-slate-300 hover:border-red-400/70 hover:bg-[#0d2238]'
+            }`}
+          >
+            <Crosshair className="h-[18px] w-[18px]" />
+            <span className="mt-1 text-xs font-bold leading-none">
+              {laserActive ? '测距中' : '实测距'}
+            </span>
+            <span className="mt-1 font-mono text-[10px] leading-none text-slate-500">
+              T
+            </span>
+          </button>
+        )}
 
         <button
           type="button"

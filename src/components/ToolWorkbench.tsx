@@ -27,8 +27,12 @@ import { DISPOSITION_PROFILES } from '../config/disposition';
 import { INSPECTION_POINT_DETAILS } from '../config/inspectionDetails';
 import { buildInspectionReadout } from '../config/inspectionReadouts';
 import { BACKPACK_DISPLAY_ITEMS } from '../config/gameText';
+import { hudStore, useHudSnapshot } from '../game/hudStore';
+import { soundEngine } from '../game/sound';
+import type { WorkPermitRoster } from '../game/workPermit';
 import { useFocusTrap } from './useFocusTrap';
 import { ToolSprite } from './ToolSprite';
+import { WorkPermitPanel } from './WorkPermitPanel';
 
 /** 红外读数方式的能力边界：只有同距同角三相读数能作为判级依据。 */
 const MEASURE_MODE_HINT: Record<string, string> = {
@@ -39,6 +43,7 @@ const MEASURE_MODE_HINT: Record<string, string> = {
 
 interface ToolWorkbenchProps {
   point: Act1PointDef;
+  seed?: number;
   variant?: Act1Variant;
   covered: boolean;
   observed: boolean;
@@ -52,6 +57,7 @@ interface ToolWorkbenchProps {
   readings: Act1Reading[];
   reviewChances?: number;
   message?: string | null;
+  onSyncRosterTo3D?: (roster: WorkPermitRoster) => void;
   onToolAction: (tool: Act1Tool | 'visual', actionId: string) => void;
   onVisualInspect: () => void;
   onDisposition: (grade: Act1Grade) => void;
@@ -68,6 +74,7 @@ interface ToolWorkbenchProps {
  */
 export function ToolWorkbench({
   point,
+  seed = 1024,
   variant = 'A',
   covered,
   observed,
@@ -81,6 +88,7 @@ export function ToolWorkbench({
   readings,
   reviewChances = 0,
   message,
+  onSyncRosterTo3D,
   onToolAction,
   onVisualInspect,
   onDisposition,
@@ -90,6 +98,7 @@ export function ToolWorkbench({
 }: ToolWorkbenchProps) {
   const ref = useRef<HTMLDivElement>(null);
   const evidenceRef = useRef<HTMLDivElement>(null);
+  const hud = useHudSnapshot();
   useFocusTrap(ref, true);
 
   const detail = INSPECTION_POINT_DETAILS[point.id];
@@ -216,6 +225,26 @@ export function ToolWorkbench({
               <span>3D 实景特写 · {detail?.bayName ?? point.zone}</span>
             </div>
             <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  const next = !hud.laserModeActive;
+                  soundEngine.playLaserMeasure();
+                  hudStore.update({
+                    laserModeActive: next,
+                    laserMeasurement: next ? hud.laserMeasurement : null,
+                  });
+                }}
+                className={`rounded border px-2.5 py-1 font-mono text-[11px] font-bold transition-colors cursor-pointer ${
+                  hud.laserModeActive
+                    ? 'border-red-400 bg-red-950/90 text-red-200 ring-1 ring-red-400/50'
+                    : 'border-sky-500/40 bg-slate-950/85 text-sky-300 hover:border-red-400/70 hover:text-red-200'
+                }`}
+              >
+                {hud.laserModeActive
+                  ? '● Raycast 射线测距已开启 [T]'
+                  : '⊕ 开启 Raycast 射线测距 [T]'}
+              </button>
               <span className="rounded border border-emerald-500/40 bg-emerald-950/80 px-2.5 py-1 font-mono text-[11px] text-emerald-300">
                 可直接点击 3D 视窗靶点实操
               </span>
@@ -432,6 +461,18 @@ export function ToolWorkbench({
                 </div>
               </div>
             </section>
+
+            {/* 第二幕 1# 主变检修班前会专属：《变电站第一种工作票》现场人证与着装核对面板 */}
+            {point.id === 'a2-crew' && (
+              <WorkPermitPanel
+                seed={seed}
+                variant={variant}
+                observed={observed}
+                logDone={completedIds.has('log') || covered}
+                onSyncRosterTo3D={onSyncRosterTo3D}
+                onCompletePermitCheck={() => onToolAction('log', 'log')}
+              />
+            )}
 
             {/* 窄屏没有左侧 3D 视窗：观察与仪器检测在这里完成，避免流程断掉 */}
             <section className="rounded-lg border border-sky-200 bg-sky-50/70 p-3 lg:hidden">
