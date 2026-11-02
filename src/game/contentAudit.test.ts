@@ -2,7 +2,6 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   ACT_BRIEFING_TRIGGERS,
-  ACT_DOSSIERS,
   ACT_SECTION_CARDS,
   ACT_TASK_CARDS,
   ACT1_LINES,
@@ -12,6 +11,13 @@ import {
   ENDING_STUB,
   PROLOGUE,
 } from '../config/dialogues';
+import {
+  ACT_LEDGERS,
+  ACT_REGULATIONS,
+  GAMEPLAY_CONTROLS,
+  GAMEPLAY_STEPS,
+  PERMIT_CHECK_CRITERIA,
+} from '../config/dossier';
 import { ACT_START_SPAWNS } from '../config/actSpawns';
 import { GAME_TEXT, MESSAGES } from '../config/gameText';
 import { ACT_POINTS } from './act1';
@@ -42,7 +48,11 @@ function storyEntries(): AuditEntry[] {
   flatten('prologue', PROLOGUE, out);
   flatten('section-cards', ACT_SECTION_CARDS, out);
   flatten('task-cards', ACT_TASK_CARDS, out);
-  flatten('dossiers', ACT_DOSSIERS, out);
+  flatten('ledgers', ACT_LEDGERS, out);
+  flatten('regulations', ACT_REGULATIONS, out);
+  flatten('permit-criteria', PERMIT_CHECK_CRITERIA, out);
+  flatten('gameplay-controls', GAMEPLAY_CONTROLS, out);
+  flatten('gameplay-steps', GAMEPLAY_STEPS, out);
   flatten('act1-lines', ACT1_LINES, out);
   flatten('ending-good', ENDING_GOOD, out);
   flatten('ending-end', ENDING_END, out);

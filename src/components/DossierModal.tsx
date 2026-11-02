@@ -1,124 +1,29 @@
-import { useEffect, useState, useRef } from 'react';
-import { ACT_DOSSIERS, ACT_TASK_CARDS } from '../config/dialogues';
-import { getDispositionOption } from '../config/disposition';
-import {
-  ACT1_POINT_STATUS_LABELS,
-  countResolvedPoints,
-  dispositionNeedsEvidence,
-  evaluateActOutcome,
-  getAct1PointStatus,
-  getAct1VisualText,
-  getActName,
-  getActPoints,
-  getAdmissibleReading,
-  isActComplete,
-  isPointCovered,
-  type Act1State,
-  type ActNo,
-} from '../game/act1';
+import { useEffect, useRef, useState } from 'react';
+import { BookOpen, Boxes, ClipboardList } from 'lucide-react';
+import type { DossierAssetKind } from '../config/dossier';
+import { getActName, getActPoints, type Act1PointId, type Act1State, type ActNo } from '../game/act1';
 import { useFocusTrap } from './useFocusTrap';
+import { LogPane, type LogSelection } from './dossier/LogPane';
+import { LedgerPane } from './dossier/LedgerPane';
+import { ManualPane, type ManualSection } from './dossier/ManualPane';
 
-interface MemoSection {
-  title: string;
-  lines: string[];
-}
+type DossierTab = 'log' | 'ledger' | 'manual';
 
-function buildLogSection(act: ActNo, state: Act1State | null): MemoSection {
-  if (!state) {
-    return { title: '监理日志', lines: [`${getActName(act)}：本幕尚未开始。`] };
-  }
+const TAB_ORDER: DossierTab[] = ['log', 'ledger', 'manual'];
 
-  const points = getActPoints(act);
-  const lines = [
-    `本幕：${getActName(act)}`,
-    `检查机会 ${state.reviewChances} · 进度 ${countResolvedPoints(state)}/${points.length}`,
-  ];
+const TABS: { id: DossierTab; label: string; en: string; icon: typeof ClipboardList }[] = [
+  { id: 'log', label: '监理日志', en: 'SUPERVISION LOG', icon: ClipboardList },
+  { id: 'ledger', label: '设备台账', en: 'EQUIPMENT LEDGER', icon: Boxes },
+  { id: 'manual', label: '安规手册', en: 'SAFETY MANUAL', icon: BookOpen },
+];
 
-  for (const point of points) {
-    const pointState = state.points[point.id];
-    const covered = isPointCovered(state, point.id);
-    const status = ACT1_POINT_STATUS_LABELS[getAct1PointStatus(state, point.id)];
-    const details: string[] = [status];
-
-    const admissible = getAdmissibleReading(pointState);
-    const reading = admissible ?? pointState?.readings[0];
-    if (reading) {
-      const suffix = admissible ? '' : '（参考）';
-      details.push(`读数 ${reading.label} ${reading.unit}${suffix}`);
-    }
-    if (covered) {
-      const finding = point.finding[state.variant];
-      details.push(finding ? `发现：${finding.title}` : '发现：未见异常');
-    }
-    const grade = pointState?.disposition;
-    if (grade) {
-      const option = getDispositionOption(point.profile, grade);
-      const needsEvidence = dispositionNeedsEvidence(grade);
-      details.push(
-        `处置：${needsEvidence ? '取证处理' : '正常记录'}${option ? `（${option.grade} ${option.label}）` : ''}`
-      );
-      if (needsEvidence) {
-        details.push(pointState?.evidenceId ? '证据：已记录' : '证据：待补');
-      }
-    }
-
-    lines.push(`${point.name}　${details.join('　|　')}`);
-  }
-
-  if (isActComplete(state)) {
-    const outcome = evaluateActOutcome(state);
-    if (outcome.unhandled.length > 0) {
-      lines.push(`未闭环隐患：${outcome.unhandled.join('、')}`);
-    }
-  }
-
-  return { title: '监理日志', lines };
-}
-
-function buildInspectionRecords(
-  act: ActNo,
-  state: Act1State | null
-): MemoSection {
-  if (!state) {
-    return { title: '巡检记录', lines: [`${getActName(act)}：本幕尚未开始。`] };
-  }
-
-  const lines = [`本幕：${getActName(act)}`];
-  for (const point of getActPoints(act)) {
-    const pointState = state.points[point.id];
-    const observed = Boolean(pointState?.completedActions.includes('visual'));
-    const covered = isPointCovered(state, point.id);
-    const status = ACT1_POINT_STATUS_LABELS[getAct1PointStatus(state, point.id)];
-
-    lines.push(`${point.name}　${status}`);
-    if (observed) lines.push(getAct1VisualText(point.id, state.variant));
-    if (pointState?.completedActions.includes('drone-recon')) {
-      lines.push('检测：升空观察取证已完成');
-    }
-    for (const reading of pointState?.readings ?? []) {
-      const suffix = reading.quality === 'ok' ? '' : '（参考）';
-      lines.push(`读数：${reading.label} ${reading.unit}${suffix}`);
-    }
-    if (covered) {
-      const finding = point.finding[state.variant];
-      lines.push(finding ? `发现：${finding.title}` : '发现：未见异常');
-    }
-    const grade = pointState?.disposition;
-    if (grade) {
-      const option = getDispositionOption(point.profile, grade);
-      const needsEvidence = dispositionNeedsEvidence(grade);
-      lines.push(
-        `处置：${needsEvidence ? '取证处理' : '正常记录'}${option ? `（${option.grade} ${option.label}）` : ''}`
-      );
-      if (needsEvidence) {
-        lines.push(pointState?.evidenceId ? '证据：已记录' : '证据：待补');
-      }
-    }
-  }
-
-  return { title: '巡检记录', lines };
-}
-
+/**
+ * 备忘录（E）：三幕统一为三个分页。
+ *
+ * 1. 监理日志：左栏任务说明 + 各检查点，右栏对应记录；
+ * 2. 设备台账：左栏设备 / 人员 / 场地，右栏台账卡片；
+ * 3. 安规手册：安规条例（带引用）、处置单评级、班前会清单、玩法说明。
+ */
 export function DossierModal({
   act,
   actState,
@@ -131,6 +36,13 @@ export function DossierModal({
   const ref = useRef<HTMLDivElement>(null);
   useFocusTrap(ref, true);
 
+  const [tab, setTab] = useState<DossierTab>('log');
+  const [logSelection, setLogSelection] = useState<LogSelection>({ kind: 'task' });
+  const [ledgerKind, setLedgerKind] = useState<DossierAssetKind>('equipment');
+  const [manualSection, setManualSection] = useState<ManualSection>('regulations');
+  const [regulationFilter, setRegulationFilter] = useState<Act1PointId | null>(null);
+  const tabRefs = useRef<Partial<Record<DossierTab, HTMLButtonElement | null>>>({});
+
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.code !== 'KeyX') return;
@@ -142,24 +54,43 @@ export function DossierModal({
     return () => window.removeEventListener('keydown', onKey, true);
   }, [onClose]);
 
-  const dossier = ACT_DOSSIERS[act];
-  const task = ACT_TASK_CARDS[act];
-  const log = buildLogSection(act, actState);
-  const sections = [
-    {
-      title: '监理日志',
-      lines: [
-        `任务背景：${task.background}`,
-        `任务范围：${task.scope}`,
-        `已知：${task.known}`,
-        ...log.lines,
-      ],
-    },
-    buildInspectionRecords(act, actState),
-    ...dossier.sections,
-  ];
-  const [activeTabIdx, setActiveTabIdx] = useState(0);
-  const currentSection = sections[activeTabIdx] ?? sections[0];
+  const points = getActPoints(act);
+  /** 跨幕切换或存档恢复后，旧的点位选择可能已不属于本幕。 */
+  const safeLogSelection: LogSelection =
+    logSelection.kind === 'point' && !points.some((point) => point.id === logSelection.id)
+      ? { kind: 'task' }
+      : logSelection;
+
+  const openPoint = (pointId: Act1PointId) => {
+    setLogSelection({ kind: 'point', id: pointId });
+    setTab('log');
+  };
+
+  const openRegulations = (pointId: Act1PointId) => {
+    setRegulationFilter(pointId);
+    setManualSection('regulations');
+    setTab('manual');
+  };
+
+  const openAssets = (kind: DossierAssetKind) => {
+    setLedgerKind(kind);
+    setTab('ledger');
+  };
+
+  const selectManualSection = (section: ManualSection) => {
+    setManualSection(section);
+    if (section === 'regulations') setRegulationFilter(null);
+  };
+
+  const onTabKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>) => {
+    if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+    event.preventDefault();
+    const index = TAB_ORDER.indexOf(tab);
+    const step = event.key === 'ArrowRight' ? 1 : TAB_ORDER.length - 1;
+    const next = TAB_ORDER[(index + step) % TAB_ORDER.length];
+    setTab(next);
+    tabRefs.current[next]?.focus();
+  };
 
   return (
     <div className="modal-backdrop fixed inset-0 z-40 flex items-center justify-center overflow-hidden bg-slate-950/55 p-4 backdrop-blur-[3px] pointer-events-auto select-none">
@@ -168,18 +99,16 @@ export function DossierModal({
         role="dialog"
         aria-modal="true"
         aria-label="备忘录"
-        className="modal-panel relative flex max-h-[92vh] w-full max-w-[780px] flex-col overflow-hidden rounded-xl border border-slate-300 border-t-4 border-t-sky-600 bg-white text-left text-slate-900 shadow-[0_24px_80px_rgba(2,6,23,0.45)]"
+        className="modal-panel relative flex h-[92vh] max-h-[880px] w-full max-w-[1180px] flex-col overflow-hidden rounded-xl border border-slate-300 border-t-4 border-t-sky-600 bg-white text-left text-slate-900 shadow-[0_24px_80px_rgba(2,6,23,0.45)]"
       >
-        <header className="flex items-start justify-between gap-4 border-b border-slate-200 bg-slate-50 px-5 py-3.5">
+        <header className="flex items-start justify-between gap-4 border-b border-slate-200 bg-slate-50 px-5 py-3">
           <div className="flex min-w-0 items-center gap-3">
             <span className="shrink-0 rounded-md border border-sky-300 bg-sky-100 px-2 py-0.5 font-mono text-xs font-bold tracking-wider text-sky-800">
               MEMO
             </span>
             <div className="min-w-0">
-              <h2 className="truncate text-lg font-bold text-slate-900">
-                备忘录
-              </h2>
-              <div className="truncate text-xs font-medium tracking-[0.1em] text-slate-500">
+              <h2 className="truncate text-lg font-bold leading-6 text-slate-900">备忘录</h2>
+              <div className="truncate text-xs font-medium tracking-[0.08em] text-slate-500">
                 {getActName(act)} · 现场记录与规程
               </div>
             </div>
@@ -193,60 +122,86 @@ export function DossierModal({
           </button>
         </header>
 
-        <div className="flex gap-2 overflow-x-auto border-b border-slate-200 bg-white px-5 py-3">
-          {sections.map((section, idx) => {
-            const isSelected = activeTabIdx === idx;
+        <div
+          role="tablist"
+          aria-label="备忘录分页"
+          className="flex shrink-0 border-b border-slate-200 bg-white px-2"
+        >
+          {TABS.map((item) => {
+            const Icon = item.icon;
+            const active = tab === item.id;
             return (
               <button
-                key={section.title}
+                key={item.id}
+                ref={(node) => {
+                  tabRefs.current[item.id] = node;
+                }}
                 type="button"
-                onClick={() => setActiveTabIdx(idx)}
-                className={`min-w-0 flex-1 whitespace-nowrap rounded-lg border px-3 py-2 text-left text-xs transition-colors cursor-pointer ${
-                  isSelected
-                    ? 'border-sky-500 bg-sky-50 font-bold text-sky-900'
-                    : 'border-slate-200 bg-slate-50 text-slate-600 hover:border-sky-300 hover:bg-sky-50'
+                role="tab"
+                id={`dossier-tab-${item.id}`}
+                aria-controls="dossier-panel"
+                aria-selected={active}
+                tabIndex={active ? 0 : -1}
+                onClick={() => setTab(item.id)}
+                onKeyDown={onTabKeyDown}
+                className={`relative flex flex-1 items-center justify-center gap-2 px-3 py-2.5 text-[12.5px] font-bold transition-colors cursor-pointer ${
+                  active
+                    ? 'text-sky-900'
+                    : 'text-slate-500 hover:text-slate-800'
                 }`}
               >
-                <span className="mr-1.5 font-mono text-[10px] text-sky-700">
-                  0{idx + 1}
+                <Icon className={`h-4 w-4 ${active ? 'text-sky-600' : 'text-slate-400'}`} />
+                <span>{item.label}</span>
+                <span className="hidden font-mono text-[9px] font-medium tracking-[0.12em] text-slate-400 xl:inline">
+                  {item.en}
                 </span>
-                <span className="truncate font-semibold">{section.title}</span>
+                {active && (
+                  <span className="absolute inset-x-2 -bottom-px h-[2px] rounded-t bg-sky-600" />
+                )}
               </button>
             );
           })}
         </div>
 
-        <div className="min-h-0 flex-1 overflow-y-auto bg-slate-50 p-4">
-          <div className="space-y-3 rounded-lg border border-slate-200 bg-white p-4">
-            <h3 className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-2 text-sm font-bold text-slate-900">
-              <span className="flex items-center gap-2">
-                <span className="h-1.5 w-1.5 rounded-full bg-sky-500" />
-                {currentSection.title}
-              </span>
-              <span className="whitespace-nowrap font-mono text-[10px] font-medium text-slate-400">
-                条款规范 [{activeTabIdx + 1}/{sections.length}]
-              </span>
-            </h3>
-
-            <ul className="space-y-2.5">
-              {currentSection.lines.map((line) => (
-                <li
-                  key={line}
-                  className="flex items-start gap-2.5 text-[13px] leading-6 text-slate-700"
-                >
-                  <span className="mt-0.5 shrink-0 font-mono text-xs text-sky-600">
-                    ▪
-                  </span>
-                  <span>{line}</span>
-                </li>
-              ))}
-            </ul>
-          </div>
+        <div
+          role="tabpanel"
+          id="dossier-panel"
+          aria-labelledby={`dossier-tab-${tab}`}
+          className="flex min-h-0 flex-1 flex-col"
+        >
+          {tab === 'log' && (
+            <LogPane
+              act={act}
+              state={actState}
+              selection={safeLogSelection}
+              onSelect={setLogSelection}
+              onOpenRegulations={openRegulations}
+              onOpenAssets={openAssets}
+            />
+          )}
+          {tab === 'ledger' && (
+            <LedgerPane
+              act={act}
+              kind={ledgerKind}
+              onKindChange={setLedgerKind}
+              onOpenPoint={openPoint}
+            />
+          )}
+          {tab === 'manual' && (
+            <ManualPane
+              act={act}
+              section={manualSection}
+              filter={regulationFilter}
+              onSectionChange={selectManualSection}
+              onClearFilter={() => setRegulationFilter(null)}
+              onOpenPoint={openPoint}
+            />
+          )}
         </div>
 
-        <footer className="flex flex-col gap-2 border-t border-slate-200 bg-white px-5 py-3 sm:flex-row sm:items-center sm:justify-between">
-          <span className="text-xs text-slate-500">
-            现场记录 · 规程汇编 · 本幕监理日志
+        <footer className="flex shrink-0 flex-col gap-2 border-t border-slate-200 bg-white px-5 py-2.5 sm:flex-row sm:items-center sm:justify-between">
+          <span className="text-[11px] text-slate-500">
+            监理日志 · 设备台账 · 安规手册 —— 三个分页覆盖本幕全部现场资料
           </span>
           <button
             type="button"
