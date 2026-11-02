@@ -15,7 +15,6 @@ import {
 import {
   canCaptureDroneRecon,
   getAct1Point,
-  getAct1VisualText,
   getAdmissibleReading,
   isActComplete,
   isPointCovered,
@@ -109,6 +108,19 @@ export const StoryLayer = forwardRef<StoryLayerHandle, StoryLayerProps>(function
       closeAuxModals();
       setWorkbenchPointId(pointId);
       dispatch({ type: 'message', text: null });
+      // 打开处置单即视为已完成现场观察，不再单列“第一步观察”操作。
+      const alreadyObserved = Boolean(
+        story.act1?.points[pointId]?.completedActions.includes('visual')
+      );
+      if (story.phase === 'act1' && !alreadyObserved) {
+        dispatch({
+          type: 'act1-action',
+          pointId,
+          tool: 'visual',
+          actionId: 'visual',
+          silent: true,
+        });
+      }
     },
     openDossier: () => {
       closeAuxModals();
@@ -336,15 +348,14 @@ export const StoryLayer = forwardRef<StoryLayerHandle, StoryLayerProps>(function
               : undefined
           }
           evidencePerspective={point.evidencePerspective}
-          observationText={
-            story.act1
-              ? getAct1VisualText(point.id, story.act1.variant)
-              : point.clue
-          }
           readings={pointState?.readings ?? []}
           reviewChances={story.act1?.reviewChances ?? 0}
           message={story.message}
+          permitSignoff={story.act1?.permitSignoff ?? null}
           onSyncRosterTo3D={onSyncRosterTo3D}
+          onPermitSign={(judgment) => {
+            dispatch({ type: 'act1-permit-sign', judgment });
+          }}
           onToolAction={(tool, actionId) => {
             if (actionId === 'invalid') {
               soundEngine.playHazardWarning();
@@ -368,15 +379,6 @@ export const StoryLayer = forwardRef<StoryLayerHandle, StoryLayerProps>(function
               pointId: point.id,
               tool,
               actionId,
-            });
-          }}
-          onVisualInspect={() => {
-            soundEngine.playVisualInspect();
-            dispatch({
-              type: 'act1-action',
-              pointId: point.id,
-              tool: 'visual',
-              actionId: 'visual',
             });
           }}
           onDisposition={(grade) => {

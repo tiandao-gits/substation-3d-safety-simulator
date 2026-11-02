@@ -1,6 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createAct1State, ACT1_SCORE_BASE } from './act1';
+import {
+  attachAct1Evidence,
+  createAct1State,
+  ACT1_SCORE_BASE,
+  DISPOSITION_ERROR_PENALTY,
+  getActPoints,
+  setAct1Disposition,
+  standardGradeFor,
+  type ActNo,
+} from './act1';
+import { buildActReview } from './endingReview';
 import { PROLOGUE } from '../config/dialogues';
 import {
   act1PendingLine,
@@ -342,4 +352,103 @@ test('触电事故在存档往返后仍是触电事故', () => {
     act1: { ...createAct1State(SEED, 1), actFailed: true },
   });
   assert.equal(legacy.act1?.failReason, 'chances', '旧存档按检查机会耗尽处理');
+});
+
+test('第三幕的处置过当必须落到结局记分上', () => {
+  // 截图里的局面：序章选 defer 起手 −5，第三幕第一点把"一般隐患"按 P3 处置（标准 P1）。
+  let act3 = createQaCompletedAct1(SEED, 3);
+  act3 = setAct1Disposition(act3, 'a3-hardhat', 'P3').state;
+  act3 = { ...act3, pendingLines: [], score: ACT1_SCORE_BASE - PROLOGUE_DEFER_PENALTY };
+
+  const s = storyReducer(
+    {
+      ...createStoryState(SEED),
+      phase: 'act1',
+      act: 3,
+      policy: 'defer',
+      act1: act3,
+      totalScore: ACT1_SCORE_BASE - PROLOGUE_DEFER_PENALTY,
+    },
+    { type: 'act-complete' }
+  );
+
+  assert.equal(s.phase, 'ending-vn');
+  assert.equal(s.act1, null, '结算后的幕状态只留在 actHistory，不再挂回 act1');
+  assert.equal(
+    s.totalScore,
+    ACT1_SCORE_BASE - PROLOGUE_DEFER_PENALTY - DISPOSITION_ERROR_PENALTY
+  );
+  assert.equal(
+    settlementScoreForStory(s),
+    ACT1_SCORE_BASE - PROLOGUE_DEFER_PENALTY - DISPOSITION_ERROR_PENALTY,
+    '结局页显示的分数必须扣掉第三幕的处置过当'
+  );
+
+  const review = buildActReview(s.actHistory[s.actHistory.length - 1]);
+  assert.deepEqual(review.points[0].deductions, ['处置等级高于标准（处理过当）（8 分）']);
+  assert.equal(
+    storyFromSave(storyToSave(s)).totalScore,
+    s.totalScore,
+    '存档往返后分数一致'
+  );
+});
+
+test('结局阶段即使残留结算前的 act1，也以 totalScore 为准', () => {
+  const stale = {
+    ...createStoryState(SEED),
+    phase: 'ending-stub' as const,
+    act: 3 as const,
+    totalScore: 87,
+    act1: { ...createAct1State(SEED, 3), score: 95 },
+  };
+  assert.equal(
+    settlementScoreForStory(stale),
+    87,
+    '结算前的 act1.score 不能盖过结算后的 totalScore'
+  );
+});
+
+/** 一幕里挑一个标准等级低于 P3 的检查点，故意按 P3 处置（结算时记一条 8 分扣分）。 */
+function actWithOneOverGrade(act: ActNo, baseScore: number) {
+  let state = createQaCompletedAct1(SEED, act);
+  for (const point of getActPoints(act)) {
+    if (standardGradeFor(state, point.id) === 'P3') continue;
+    state = setAct1Disposition(state, point.id, 'P3').state;
+    if (!state.points[point.id].evidenceId) {
+      state = attachAct1Evidence(state, point.id, `over-${point.id}`);
+    }
+    break;
+  }
+  // 幕间只继承总分：构造的幕状态要显式带上进场分，否则等于把前三幕的扣分洗掉。
+  return { ...state, pendingLines: [], score: baseScore };
+}
+
+test('三幕的处置扣分逐幕结算，结局显示分等于 100 减去全部扣分', () => {
+  let s = storyReducer(createStoryState(SEED), { type: 'qa-act1', seed: SEED, act: 1 });
+
+  s = { ...s, act1: actWithOneOverGrade(1, ACT1_SCORE_BASE) };
+  s = storyReducer(s, { type: 'act-complete' });
+  assert.equal(s.totalScore, ACT1_SCORE_BASE - DISPOSITION_ERROR_PENALTY, '第一幕结算即扣');
+  s = storyReducer(s, { type: 'section-done' });
+
+  s = { ...s, act1: actWithOneOverGrade(2, s.totalScore) };
+  s = storyReducer(s, { type: 'act-complete' });
+  assert.equal(s.totalScore, ACT1_SCORE_BASE - DISPOSITION_ERROR_PENALTY * 2, '第二幕累加');
+  s = storyReducer(s, { type: 'section-done' });
+
+  s = { ...s, act1: actWithOneOverGrade(3, s.totalScore) };
+  s = storyReducer(s, { type: 'act-complete' });
+  assert.equal(s.phase, 'ending-vn');
+
+  const reported = s.actHistory.reduce(
+    (sum, act) => sum + act.deductions.reduce((n, d) => n + d.points, 0),
+    0
+  );
+  assert.equal(reported, DISPOSITION_ERROR_PENALTY * 3, '复盘三幕各一条 8 分扣分');
+  assert.equal(s.totalScore, ACT1_SCORE_BASE - reported);
+  assert.equal(
+    settlementScoreForStory(s),
+    ACT1_SCORE_BASE - reported,
+    '结局记分口径与复盘一致（没有未闭环隐患时）'
+  );
 });

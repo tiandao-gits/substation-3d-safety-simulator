@@ -25,9 +25,12 @@ import {
   isPointCovered,
   isPointResolved,
   normalizeAct1State,
+  PERMIT_MISMATCH_PENALTY,
+  PERMIT_UNSIGNED_PENALTY,
   pickAct1Variant,
   setAct1Disposition,
   settleActDispositions,
+  signAct1Permit,
   severityToEquipmentGrade,
   standardGradeFor,
   type Act1PointId,
@@ -35,6 +38,11 @@ import {
   type Act1Variant,
   type ActNo,
 } from './act1';
+import {
+  createInitialPermitJudgment,
+  generateWorkPermitRoster,
+  getPermitListedMembers,
+} from './workPermit';
 import { findStandableSpotNear, resolvePlayerCollision } from './rules';
 import { isInsideApartmentRoom } from './apartmentDoor';
 
@@ -433,15 +441,12 @@ test('Phase 2 专项工具核验无扣分且不改变标准判级', () => {
   s1 = detectAll(flash1.state);
   assert.equal(standardGradeFor(s1, 'hv-10kv'), 'P2');
 
-  // Act 2: torque & caliper on a2-crew, feeler on a2-wall, flashlight on a2-oil
+  // Act 2: torque on a2-oil, feeler on a2-wall, flashlight on a2-oil
   let s2 = createAct1State(seedFor('C', 2), 2);
-  const torqueRes = applyAct1Action(s2, 'a2-crew', 'torque', 'ground-torque');
+  const torqueRes = applyAct1Action(s2, 'a2-oil', 'torque', 'ground-torque');
   assert.equal(torqueRes.result.penalty, 0);
   assert.equal(torqueRes.result.kind, 'clue');
-  const caliperRes = applyAct1Action(torqueRes.state, 'a2-crew', 'caliper', 'ground-caliper');
-  assert.equal(caliperRes.result.penalty, 0);
-  assert.equal(caliperRes.result.kind, 'clue');
-  const feelerRes = applyAct1Action(caliperRes.state, 'a2-wall', 'feeler', 'wall-crack');
+  const feelerRes = applyAct1Action(torqueRes.state, 'a2-wall', 'feeler', 'wall-crack');
   assert.equal(feelerRes.result.penalty, 0);
   assert.equal(feelerRes.result.kind, 'clue');
   const oilLightRes = applyAct1Action(feelerRes.state, 'a2-oil', 'flashlight', 'oil-light');
@@ -504,3 +509,64 @@ test('单巡检点闭环不弹剧情聊天，仅在第一幕、第二幕全点�
   assert.deepEqual(s3.pendingLines, [], '第三幕结束不触发气泡聊天（直接进入终章 VN）');
 });
 
+
+test('班前会名册只归档结论，对错留到第二幕结算才扣分', () => {
+  const base: Act1State = { ...createAct1State(1024, 2), variant: 'D' };
+  const roster = generateWorkPermitRoster(base.seed, base.variant, 0);
+  const members = getPermitListedMembers(roster);
+
+  // 还有人没给结论：不签注。
+  const draft = signAct1Permit(base, createInitialPermitJudgment(roster));
+  assert.equal(draft.ok, false);
+  assert.equal(draft.state.permitSignoff, null);
+
+  // 全部打勾（漏判超期证件）：可以签注，但结算时才扣分。
+  const allPass = {
+    entries: Object.fromEntries(
+      members.map((m) => [m.nodeName, { passed: true as const, violation: null }])
+    ),
+  };
+  const signed = signAct1Permit(base, allPass);
+  assert.equal(signed.ok, true);
+  assert.equal(signed.state.permitSignoff?.incorrect, 1);
+  assert.equal(signed.state.score, ACT1_SCORE_BASE, '签注当时不扣分');
+
+  const settled = settleActDispositions(signed.state);
+  const mismatch = settled.deductions.find(
+    (item) => item.id === 'permit-a2-crew-mismatch'
+  );
+  assert.ok(mismatch, '第二幕结算应记录一条名册核验扣分');
+  assert.equal(mismatch?.points, PERMIT_MISMATCH_PENALTY);
+  assert.equal(settled.score, ACT1_SCORE_BASE - PERMIT_MISMATCH_PENALTY);
+});
+
+test('班前会名册逐人核验正确时第二幕结算不扣分', () => {
+  const base: Act1State = { ...createAct1State(1024, 2), variant: 'D' };
+  const roster = generateWorkPermitRoster(base.seed, base.variant, 0);
+  const entries = Object.fromEntries(
+    getPermitListedMembers(roster).map((m) =>
+      m.badgeStatus === 'valid'
+        ? [m.nodeName, { passed: true as const, violation: null }]
+        : [m.nodeName, { passed: false as const, violation: 'cert-expired' as const }]
+    )
+  );
+  const signed = signAct1Permit(base, { entries });
+  assert.equal(signed.state.permitSignoff?.incorrect, 0);
+
+  const settled = settleActDispositions(signed.state);
+  assert.equal(
+    settled.deductions.some((item) => item.id.startsWith('permit-a2-crew')),
+    false
+  );
+  assert.equal(settled.score, ACT1_SCORE_BASE);
+});
+
+test('班前会名册整场未签注时第二幕结算扣分', () => {
+  const settled = settleActDispositions(createAct1State(1024, 2));
+  const unsigned = settled.deductions.find(
+    (item) => item.id === 'permit-a2-crew-unsigned'
+  );
+  assert.ok(unsigned);
+  assert.equal(unsigned?.points, PERMIT_UNSIGNED_PENALTY);
+  assert.equal(settled.score, ACT1_SCORE_BASE - PERMIT_UNSIGNED_PENALTY);
+});

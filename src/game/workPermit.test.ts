@@ -5,6 +5,8 @@ import {
   createInitialPermitJudgment,
   evaluateWorkPermitJudgment,
   generateWorkPermitRoster,
+  getCrewExpectedViolation,
+  getPermitListedMembers,
 } from './workPermit';
 
 test('ACT2_CREW_LINEUP_POSITIONS separates all 5 lineup positions cleanly with no overlapping coordinates', () => {
@@ -63,38 +65,76 @@ test('generateWorkPermitRoster matches main story variant D vs normal variants',
   const defectRoster = generateWorkPermitRoster(1024, 'D');
   assert.equal(defectRoster.hasDefect, true);
   assert.equal(defectRoster.hasBadgeDefect, true);
-  assert.equal(defectRoster.hasUniformDefect, true);
   assert.equal(defectRoster.workers[2].certExpiry, '2025-06');
   assert.equal(defectRoster.workers[2].badgeStatus, 'expired');
-  assert.equal(defectRoster.workers[1].uniformStatus, 'irregular');
+  // 工装不再是名册核验项，3D 现场全员统一标准工装色。
+  assert.equal(
+    defectRoster.sceneWorkers.every(
+      (w) => w.uniformColorHex === 0x1d4ed8 || w.slotIndex === 0
+    ),
+    true
+  );
 });
 
-test('evaluateWorkPermitJudgment validates player visual inspection answers against 3D roster truth', () => {
+test('evaluateWorkPermitJudgment validates per-crew roster verdicts against 3D roster truth', () => {
   const defectRoster = generateWorkPermitRoster(1024, 'D');
-  const emptyJudgment = createInitialPermitJudgment();
-  assert.equal(evaluateWorkPermitJudgment(defectRoster, emptyJudgment).complete, false);
+  const emptyJudgment = createInitialPermitJudgment(defectRoster);
+  const emptyEval = evaluateWorkPermitJudgment(defectRoster, emptyJudgment);
+  assert.equal(emptyEval.complete, false);
 
-  const wrongJudgment = {
-    countedSiteTotal: 5,
-    headcountVerdict: 'matched' as const,
-    badgeVerdict: 'all_valid' as const,
-    uniformVerdict: 'all_standard' as const,
-    helmetVerdict: 'all_standard' as const,
-  };
-  const wrongEval = evaluateWorkPermitJudgment(defectRoster, wrongJudgment);
+  // 全部打勾：漏判超期证件，必须被判为不准确。
+  const allPassEntries = Object.fromEntries(
+    getPermitListedMembers(defectRoster).map((m) => [
+      m.nodeName,
+      { passed: true, violation: null },
+    ])
+  );
+  const wrongEval = evaluateWorkPermitJudgment(defectRoster, {
+    entries: allPassEntries,
+  });
   assert.equal(wrongEval.complete, true);
   assert.equal(wrongEval.accurate, false);
-  assert.equal(wrongEval.mismatches.length, 2);
+  assert.equal(wrongEval.mismatches.length, 1);
 
-  const rightJudgment = {
-    countedSiteTotal: defectRoster.actualSiteCount,
-    headcountVerdict: 'matched' as const,
-    badgeVerdict: 'has_invalid' as const,
-    uniformVerdict: 'has_irregular' as const,
-    helmetVerdict: 'all_standard' as const,
-  };
-  const rightEval = evaluateWorkPermitJudgment(defectRoster, rightJudgment);
+  // 打叉但不选违规类型：仍可签注，但按错项计。
+  const missingKind = evaluateWorkPermitJudgment(defectRoster, {
+    entries: {
+      ...allPassEntries,
+      [defectRoster.workers[2].nodeName]: { passed: false, violation: null },
+    },
+  });
+  assert.equal(missingKind.complete, true);
+  assert.equal(missingKind.accurate, false);
+  assert.equal(missingKind.mismatches.length, 1);
+
+  // 按现场事实逐人填写：全部准确。
+  const rightEntries = Object.fromEntries(
+    getPermitListedMembers(defectRoster).map((m) => {
+      const expected = getCrewExpectedViolation(m);
+      return [
+        m.nodeName,
+        expected === null
+          ? { passed: true, violation: null }
+          : { passed: false, violation: expected },
+      ];
+    })
+  );
+  const rightEval = evaluateWorkPermitJudgment(defectRoster, {
+    entries: rightEntries,
+  });
   assert.equal(rightEval.complete, true);
   assert.equal(rightEval.accurate, true);
   assert.equal(rightEval.mismatches.length, 0);
+});
+
+test('getCrewExpectedViolation maps scene defects onto roster violation kinds', () => {
+  const defectRoster = generateWorkPermitRoster(1024, 'D');
+  assert.equal(
+    getCrewExpectedViolation(defectRoster.workers[2]),
+    'cert-expired',
+    '焊工证超期应判为证件过期'
+  );
+  // 工装不作核验项：同一名穿便装的工人在名册上一律按合规处理。
+  assert.equal(getCrewExpectedViolation(defectRoster.workers[1]), null);
+  assert.equal(getCrewExpectedViolation(defectRoster.leader), null);
 });

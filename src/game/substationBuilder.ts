@@ -301,8 +301,11 @@ function decorateSpawnedCrewWorker(
   const maxY = Number.isFinite(localBox.max.y) ? localBox.max.y : 1.72;
   const height = Math.max(1.2, maxY - minY);
   const chestY = minY + height * 0.65;
+  // 该班组模型总高约 1.75 m，胸面（+X 正胸方向）实测前缘：领口 -0.145 m、胸骨 -0.058 m。
+  // 所有工牌尺寸按身高归一化，换成别的角色模板也不会飞出去。
+  const unit = height / 1.747;
 
-  // 2. 胸前实体工作证挂牌（单面正胸贴挂，消除侧面肋部多余卡片与悬浮圆环）
+  // 2. 胸前工作证：颈带挂脖、贴胸下垂，证件悬在带扣下方（不再凭空漂浮）
   if (spec.badgeStatus !== 'missing' && spec.badgeColorHex !== null) {
     const badgeGroup = new THREE.Group();
     badgeGroup.name = `CrewBadge_${spec.nodeName}`;
@@ -319,59 +322,83 @@ function decorateSpawnedCrewWorker(
       roughness: 0.3,
     });
 
-    // 模型局部 +X 为正胸朝向（结合 rotY=0.26 朝向东侧相机），将工牌贴在左前胸口袋处
+    const cardW = 0.092 * unit;
+    const cardH = 0.128 * unit;
+    // 卡面贴住胸骨前缘（局部 +X 为正胸方向），随胸面后仰 6°，只留 1–2 mm 织物余量
+    const cardX = -0.048 * unit;
+    const cardTilt = 0.11;
+
     const cardHolder = new THREE.Group();
-    cardHolder.position.set(0.148, -0.02, 0.045);
-    cardHolder.rotation.y = Math.PI / 2 - 0.26;
+    cardHolder.position.set(cardX, 0, 0);
+    cardHolder.rotation.z = cardTilt;
+
+    const cardYaw = new THREE.Group();
+    cardYaw.rotation.y = Math.PI / 2 - 0.14;
+    cardHolder.add(cardYaw);
 
     const backing = new THREE.Mesh(
-      new THREE.BoxGeometry(0.135, 0.168, 0.012),
+      new THREE.BoxGeometry(cardW, cardH, 0.01 * unit),
       badgeRimMat
     );
-    cardHolder.add(backing);
+    cardYaw.add(backing);
 
     const frontFace = new THREE.Mesh(
-      new THREE.PlaneGeometry(0.125, 0.156),
+      new THREE.PlaneGeometry(cardW * 0.9, cardH * 0.94),
       badgeFaceMat
     );
-    frontFace.position.z = 0.007;
-    cardHolder.add(frontFace);
-
-    const clipMat = new THREE.MeshBasicMaterial({
-      color: spec.badgeStatus === 'expired' ? 0xf87171 : 0x38bdf8,
-    });
-    const strap = new THREE.Mesh(
-      new THREE.BoxGeometry(0.016, 0.065, 0.008),
-      clipMat
-    );
-    strap.position.set(0, 0.105, 0);
-    cardHolder.add(strap);
+    frontFace.position.z = 0.006 * unit;
+    cardYaw.add(frontFace);
 
     badgeGroup.add(cardHolder);
+
+    // 颈带：自领口两侧斜下收拢至带扣，贴合胸口前倾角，不垂直戳出肚子
+    const lanyardMat = new THREE.MeshStandardMaterial({
+      color: 0x1e2b45,
+      roughness: 0.86,
+      metalness: 0.04,
+      side: THREE.DoubleSide,
+    });
+    const clipTopX = cardX - Math.sin(cardTilt) * (cardH / 2);
+    const clipY = Math.cos(cardTilt) * (cardH / 2) + 0.006 * unit;
+    // badgeGroup 的 X 就是正胸方向，Y 相对胸牌中心；Y 从领口斜下收拢到带扣
+    const neckY = height * 0.82 - chestY;
+    const neckFrontX = -0.142 * unit;
+    const clipFrontX = clipTopX - 0.004 * unit;
+    const neckHalfSpan = 0.058 * unit;
+    for (const side of [-1, 1]) {
+      const from = new THREE.Vector3(neckFrontX, neckY, neckHalfSpan * side);
+      const to = new THREE.Vector3(clipFrontX, clipY + 0.008 * unit, 0);
+      const dir = to.clone().sub(from);
+      const len = dir.length();
+      const strap = new THREE.Mesh(
+        new THREE.BoxGeometry(0.005 * unit, len, 0.017 * unit),
+        lanyardMat
+      );
+      strap.position.copy(from).addScaledVector(dir, 0.5);
+      strap.quaternion.setFromUnitVectors(
+        new THREE.Vector3(0, 1, 0),
+        dir.normalize()
+      );
+      badgeGroup.add(strap);
+    }
+
+    // 带扣（颜色按证件状态，近景可直接辨认）
+    const clipMat = new THREE.MeshStandardMaterial({
+      color: spec.badgeStatus === 'expired' ? 0xf87171 : 0x38bdf8,
+      roughness: 0.35,
+      metalness: 0.5,
+    });
+    const clip = new THREE.Mesh(
+      new THREE.BoxGeometry(0.012 * unit, 0.026 * unit, 0.03 * unit),
+      clipMat
+    );
+    clip.position.set(clipFrontX, clipY + 0.006 * unit, 0);
+    badgeGroup.add(clip);
+
     node.add(badgeGroup);
   }
 
-  // 3. 标准阻燃工装银色反光胸带（违规便装时无反光带）
-  if (spec.uniformStatus === 'standard') {
-    const reflectiveStrips = new THREE.Group();
-    reflectiveStrips.name = `CrewReflective_${spec.nodeName}`;
-    reflectiveStrips.position.set(0, minY + height * 0.56, 0);
-    const stripMat = new THREE.MeshStandardMaterial({
-      color: 0xe2e8f0,
-      emissive: 0x94a3b8,
-      emissiveIntensity: 0.3,
-      roughness: 0.2,
-      metalness: 0.85,
-    });
-    const beltRing = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.178, 0.178, 0.036, 16, 1, true),
-      stripMat
-    );
-    reflectiveStrips.add(beltRing);
-    node.add(reflectiveStrips);
-  }
-
-  // 4. 头顶中立列队编号牌（仅显示列队序号与姓名，不剧透缺陷）
+  // 3. 头顶中立列队编号牌（仅显示列队序号与姓名，不剧透缺陷）
   if (showOverheadTag) {
     const spriteMat = new THREE.SpriteMaterial({
       map: createOverheadSlotTexture(spec, sceneIndex),

@@ -32,6 +32,7 @@ import {
   queueAct1Lines,
   setAct1Disposition,
   settleActDispositions,
+  signAct1Permit,
   standardGradeFor,
   type Act1Grade,
   type Act1PointId,
@@ -41,6 +42,12 @@ import {
 } from './act1';
 import type { EvidenceRecord } from './evidence';
 import { trimEvidence } from './evidence';
+import {
+  generateWorkPermitRoster,
+  getCrewExpectedViolation,
+  getPermitListedMembers,
+  type WorkPermitPlayerJudgment,
+} from './workPermit';
 import type { SaveV1, StorySettings } from './save';
 import { DEFAULT_SETTINGS } from './save';
 import type { EndingKind, ProPolicy, StoryPhase } from './storyTypes';
@@ -111,10 +118,18 @@ export function endingForRun(
   return totalScore >= PASS_SCORE_THRESHOLD ? 'good' : 'end';
 }
 
+/**
+ * 终局显示分：幕内看 act1.score（实时分），幕结算之后只看 totalScore。
+ * 幕结算（act-complete）会把"结算后的分数"写进 totalScore，act1 同时清空；
+ * 旧存档或异常状态里若还残留结算前的 act1，结局记分也不会被它带偏。
+ */
 export function settlementScoreForStory(
-  state: Pick<StoryState, 'unhandledHazards' | 'totalScore' | 'act1'>
+  state: Pick<StoryState, 'phase' | 'unhandledHazards' | 'totalScore' | 'act1'>
 ): number {
-  const base = state.act1?.score ?? state.totalScore;
+  const base =
+    state.phase === 'act1' && state.act1
+      ? state.act1.score
+      : state.totalScore;
   return settlementScore(base, state.unhandledHazards);
 }
 
@@ -129,8 +144,16 @@ export type StoryAction =
   | { type: 'vn-auto'; on: boolean }
   | { type: 'vn-fast'; on: boolean }
   | { type: 'section-done' }
-  | { type: 'act1-action'; pointId: Act1PointId; tool: Act1Tool | 'visual'; actionId: string }
+  | {
+      type: 'act1-action';
+      pointId: Act1PointId;
+      tool: Act1Tool | 'visual';
+      actionId: string;
+      /** 静默执行：只推进状态，不把结果文案推到消息栏（用于打开处置单即视为已观察）。 */
+      silent?: boolean;
+    }
   | { type: 'act1-disposition'; pointId: Act1PointId; grade: Act1Grade }
+  | { type: 'act1-permit-sign'; judgment: WorkPermitPlayerJudgment }
   | { type: 'act1-evidence'; evidence: EvidenceRecord }
   | {
       type: 'act1-penalty';
@@ -312,6 +335,22 @@ export function createQaCompletedAct1(seed: number, act: ActNo = 1): Act1State {
     if (dispositionNeedsEvidence(grade)) {
       state = attachAct1Evidence(state, point.id, `qa-${point.id}`);
     }
+  }
+  // 第二幕的班前会名册要按现场实情签注，QA 完成态才算一次干净的通关。
+  if (act === 2) {
+    const roster = generateWorkPermitRoster(state.seed, state.variant, 0);
+    const entries = Object.fromEntries(
+      getPermitListedMembers(roster).map((member) => {
+        const expected = getCrewExpectedViolation(member);
+        return [
+          member.nodeName,
+          expected === null
+            ? { passed: true as const, violation: null }
+            : { passed: false as const, violation: expected },
+        ];
+      })
+    );
+    state = signAct1Permit(state, { entries }).state;
   }
   // QA fixtures represent a finished act; chat lines must not block the state guard.
   return { ...state, pendingLines: [] };
@@ -495,13 +534,24 @@ export function storyReducer(state: StoryState, action: StoryAction): StoryState
         action.tool,
         action.actionId
       );
-      return withAct(state, outcome.state, outcome.result.text);
+      return withAct(
+        state,
+        outcome.state,
+        action.silent ? null : outcome.result.text
+      );
     }
 
     case 'act1-disposition': {
       if (state.phase !== 'act1' || !state.act1) return state;
       const outcome = setAct1Disposition(state.act1, action.pointId, action.grade);
       return withAct(state, outcome.state, outcome.message);
+    }
+
+    case 'act1-permit-sign': {
+      if (state.phase !== 'act1' || !state.act1) return state;
+      const result = signAct1Permit(state.act1, action.judgment);
+      // 签注成功由名册上的归档条反馈，不再重复推到底部消息栏。
+      return withAct(state, result.state, result.ok ? null : result.message);
     }
 
     case 'act1-evidence': {
@@ -572,6 +622,9 @@ export function storyReducer(state: StoryState, action: StoryAction): StoryState
         ending,
         unhandledHazards,
         totalScore,
+        // 结算后的幕状态只留在 actHistory 里：act1 若继续挂着结算前的旧状态，
+        // 读 act1.score 的地方（结局记分、存档）会拿到没扣本幕处置分的分数。
+        act1: null,
         actHistory,
         vn: createVnState(endingSceneFor(ending, unhandledHazards)),
         message: null,

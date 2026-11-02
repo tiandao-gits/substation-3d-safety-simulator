@@ -10,6 +10,14 @@
  * 工具名只用于判定，不渲染到任务卡、HUD 或对话。
  */
 
+import {
+  evaluateWorkPermitJudgment,
+  generateWorkPermitRoster,
+  getPermitListedMembers,
+  type CrewViolationKind,
+  type WorkPermitPlayerJudgment,
+} from './workPermit';
+
 export type ActNo = 1 | 2 | 3;
 
 export type Act1Tool =
@@ -129,6 +137,21 @@ export interface Act1Deduction {
 
 export type ActFailReason = 'chances' | 'shock';
 
+/**
+ * 第二幕班前会名册签注记录。
+ * 签注时只归档玩家结论，对错不在名册上提示，留到本幕结算统一扣分。
+ */
+export interface Act1PermitSignoff {
+  /** 名册实际核验人数 */
+  total: number;
+  /** 与 3D 现场实情不符的核验条数 */
+  incorrect: number;
+  /** 逐条差异，供结局复盘追溯 */
+  discrepancies: string[];
+  /** 签注归档的逐人核验结论，重开处置单时原样回显 */
+  entries: WorkPermitPlayerJudgment['entries'];
+}
+
 export interface Act1State {
   act: ActNo;
   seed: number;
@@ -143,12 +166,18 @@ export interface Act1State {
   failReason: ActFailReason | null;
   /** 失败原因的具体对象，例如被越过的带电警戒线区域名称。 */
   failDetail: string | null;
+  /** 班前会名册签注记录（仅第二幕产生）。 */
+  permitSignoff: Act1PermitSignoff | null;
 }
 
 export const ACT1_SCORE_BASE = 100;
 export const ACT1_REVIEW_CHANCES = 4;
 /** 处置错误（多处置 / 处理过当 / 处置不到位）按检查点扣分。 */
 export const DISPOSITION_ERROR_PENALTY = 8;
+/** 班前会名册每一条与现场不符的核验结论，在第二幕结算时扣分。 */
+export const PERMIT_MISMATCH_PENALTY = 4;
+/** 班前会名册整场未签注（跳过核验）在第二幕结算时扣分。 */
+export const PERMIT_UNSIGNED_PENALTY = 8;
 /** 巡视道路设计净宽（DL/T 5056、GB 50060 规范区间 0.7~1.0 m，本工程取上限）。 */
 export const ACT1_AISLE_DESIGN_WIDTH_M = 1.0;
 /** 220kV 设备不停电时的安全距离（GB 26860 表 1）。 */
@@ -392,12 +421,6 @@ const ACT2_POINTS_DEF: Act1PointDef[] = [
     requiredActions: ['visual'],
     actions: {
       visual: [VISUAL_ACTION],
-      torque: [
-        { id: 'ground-torque', label: '复核临时接地螺栓力矩', tool: 'torque', quality: 'ok' },
-      ],
-      caliper: [
-        { id: 'ground-caliper', label: '测量接地铜排截面尺寸', tool: 'caliper', quality: 'ok' },
-      ],
     },
     standardGrade: { A: 'P0', B: 'P0', C: 'P0', D: 'P1' },
     finding: {
@@ -455,6 +478,9 @@ const ACT2_POINTS_DEF: Act1PointDef[] = [
     actions: {
       visual: [VISUAL_ACTION],
       thermometer: [{ id: 'oil-temp', label: '测量顶层油温', tool: 'thermometer', quality: 'ok' }],
+      torque: [
+        { id: 'ground-torque', label: '复核接地螺栓力矩', tool: 'torque', quality: 'ok' },
+      ],
       flashlight: [
         { id: 'oil-light', label: '背光侧照亮检查法兰油迹', tool: 'flashlight', quality: 'ok' },
       ],
@@ -676,6 +702,7 @@ export function createAct1State(
     actFailed: false,
     failReason: null,
     failDetail: null,
+    permitSignoff: null,
   };
 }
 
@@ -738,6 +765,38 @@ export function normalizeAct1State(state: Act1State, act: ActNo): Act1State {
           ? 'chances'
           : null,
     failDetail: typeof state.failDetail === 'string' ? state.failDetail : null,
+    permitSignoff: normalizePermitSignoff(state.permitSignoff),
+  };
+}
+
+function normalizePermitSignoff(raw: unknown): Act1PermitSignoff | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const value = raw as Partial<Act1PermitSignoff>;
+  if (typeof value.total !== 'number' || typeof value.incorrect !== 'number') {
+    return null;
+  }
+  const rawEntries =
+    value.entries && typeof value.entries === 'object' ? value.entries : {};
+  const entries: WorkPermitPlayerJudgment['entries'] = {};
+  for (const [nodeName, entry] of Object.entries(rawEntries)) {
+    if (!entry || typeof entry !== 'object') continue;
+    const record = entry as { passed?: unknown; violation?: unknown };
+    entries[nodeName] = {
+      passed:
+        record.passed === true ? true : record.passed === false ? false : null,
+      violation:
+        typeof record.violation === 'string'
+          ? (record.violation as CrewViolationKind)
+          : null,
+    };
+  }
+  return {
+    total: value.total,
+    incorrect: value.incorrect,
+    discrepancies: Array.isArray(value.discrepancies)
+      ? value.discrepancies.filter((item): item is string => typeof item === 'string')
+      : [],
+    entries,
   };
 }
 
@@ -1235,9 +1294,7 @@ export function applyAct1Action(
         ? '辅助核验：照亮 3 号柜观察窗，见 B 相母排接头表面氧化变色，柜底防火封堵严密。'
         : '辅助核验：照亮柜内观察窗，三相母排色泽正常，柜底防火封堵与绝缘垫完好。';
   } else if (spec.id === 'ground-torque') {
-    text = '辅助核验：1# 主变检修临时接地线螺栓紧固力矩 42 N·m（标准 ≥ 40 N·m），接触可靠。';
-  } else if (spec.id === 'ground-caliper') {
-    text = '辅助核验：临时接地铜排截面宽 30.2 mm × 厚 4.1 mm，满足安规截面要求。';
+    text = '辅助核验：1# 主变本体接地引下线螺栓紧固力矩 42 N·m（标准 ≥ 40 N·m），接地可靠。';
   } else if (spec.id === 'wall-crack') {
     text =
       state.variant === 'B'
@@ -1494,7 +1551,67 @@ export function settleActDispositions(state: Act1State): Act1State {
     if (next.deductions.some((item) => item.id === issue.id)) continue;
     next = deduction(next, issue.id, issue.label, issue.points);
   }
+  // 班前会名册：签注时不给对错提示，全部留到本幕结束时核账。
+  if (state.act === 2) {
+    const signoff = state.permitSignoff;
+    if (!signoff) {
+      next = deduction(
+        next,
+        'permit-a2-crew-unsigned',
+        '班前会名册未签注',
+        PERMIT_UNSIGNED_PENALTY
+      );
+    } else if (signoff.incorrect > 0) {
+      next = deduction(
+        next,
+        'permit-a2-crew-mismatch',
+        `班前会名册 ${signoff.incorrect} 项核验与现场不符`,
+        signoff.incorrect * PERMIT_MISMATCH_PENALTY
+      );
+    }
+  }
   return next;
+}
+
+export interface Act1PermitSignResult {
+  state: Act1State;
+  ok: boolean;
+  message: string;
+}
+
+/**
+ * 签注班前会名册：只归档玩家结论，正确性留到本幕结算统一扣分。
+ * 名册还有人没给出结论时不签注，由界面提示补齐。
+ */
+export function signAct1Permit(
+  state: Act1State,
+  judgment: WorkPermitPlayerJudgment
+): Act1PermitSignResult {
+  if (state.act !== 2) {
+    return { state, ok: false, message: '当前幕次不需要签注班前会名册。' };
+  }
+  const roster = generateWorkPermitRoster(state.seed, state.variant, 0);
+  const evaluation = evaluateWorkPermitJudgment(roster, judgment);
+  if (!evaluation.complete) {
+    return {
+      state,
+      ok: false,
+      message: evaluation.mismatches[0] ?? '名册尚未核验完毕。',
+    };
+  }
+  return {
+    state: {
+      ...state,
+      permitSignoff: {
+        total: getPermitListedMembers(roster).length,
+        incorrect: evaluation.mismatches.length,
+        discrepancies: evaluation.mismatches,
+        entries: judgment.entries,
+      },
+    },
+    ok: true,
+    message: '名册核验结论已签注，随工作票归档。',
+  };
 }
 
 /* ------------------------------------------------------------------ */

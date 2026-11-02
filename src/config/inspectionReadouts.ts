@@ -84,6 +84,14 @@ export function buildInspectionReadout(
           unit: '',
         });
       }
+      if (acts.has('ground-torque')) {
+        secondary.push({
+          key: 'torque',
+          label: '接地螺栓力矩',
+          value: '42',
+          unit: 'N·m',
+        });
+      }
       return {
         primary: {
           key: 'oil',
@@ -199,22 +207,6 @@ export function buildInspectionReadout(
         { key: 'total', label: '受检人员', value: '5', unit: '人' },
         { key: 'certs', label: '台账证件', value: '5', unit: '份' },
       ];
-      if (acts.has('ground-torque')) {
-        secondary.push({
-          key: 'torque',
-          label: '接地螺栓力矩',
-          value: '42',
-          unit: 'N·m',
-        });
-      }
-      if (acts.has('ground-caliper')) {
-        secondary.push({
-          key: 'caliper',
-          label: '接地铜排截面',
-          value: '30.2×4.1',
-          unit: 'mm',
-        });
-      }
       return {
         primary: {
           key: 'expiry',

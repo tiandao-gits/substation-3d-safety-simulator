@@ -1,15 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Activity,
   Camera,
   CheckCircle2,
   ClipboardCheck,
-  Crosshair,
-  Eye,
   Plane,
   ScanLine,
   ShieldCheck,
-  Sparkles,
   Wrench,
   X,
 } from 'lucide-react';
@@ -19,6 +15,7 @@ import {
   type Act1ActionSpec,
   type Act1Grade,
   type Act1PointDef,
+  type Act1PermitSignoff,
   type Act1Reading,
   type Act1Tool,
   type Act1Variant,
@@ -27,10 +24,28 @@ import { DISPOSITION_PROFILES } from '../config/disposition';
 import { INSPECTION_POINT_DETAILS } from '../config/inspectionDetails';
 import { buildInspectionReadout } from '../config/inspectionReadouts';
 import { BACKPACK_DISPLAY_ITEMS } from '../config/gameText';
-import type { WorkPermitRoster } from '../game/workPermit';
+import {
+  generateWorkPermitRoster,
+  setFocusedCrewSlot,
+  type WorkPermitPlayerJudgment,
+  type WorkPermitRoster,
+} from '../game/workPermit';
 import { useFocusTrap } from './useFocusTrap';
 import { ToolSprite } from './ToolSprite';
-import { WorkPermitPanel } from './WorkPermitPanel';
+import {
+  ReadoutMetrics,
+  SceneMenu,
+  SceneReadoutFrame,
+  type SceneMenuItem,
+} from './SceneMenu';
+import {
+  CrewReadout,
+  CrewStage,
+  WorkPermitPanel,
+  buildCrewMenuItems,
+  crewMenuKey,
+  useCrewFocus,
+} from './WorkPermitPanel';
 
 /** 红外读数方式的能力边界：只有同距同角三相读数能作为判级依据。 */
 const MEASURE_MODE_HINT: Record<string, string> = {
@@ -51,13 +66,14 @@ interface ToolWorkbenchProps {
   evidenceAttached: boolean;
   evidenceDataUrl?: string;
   evidencePerspective?: 'drone';
-  observationText: string;
   readings: Act1Reading[];
   reviewChances?: number;
   message?: string | null;
+  /** 班前会名册签注记录（结论存于幕状态，关掉处置单再打开仍然保留）。 */
+  permitSignoff?: Act1PermitSignoff | null;
   onSyncRosterTo3D?: (roster: WorkPermitRoster) => void;
+  onPermitSign: (judgment: WorkPermitPlayerJudgment) => void;
   onToolAction: (tool: Act1Tool | 'visual', actionId: string) => void;
-  onVisualInspect: () => void;
   onDisposition: (grade: Act1Grade) => void;
   onCapture: () => void;
   onRequestDrone: () => void;
@@ -66,8 +82,8 @@ interface ToolWorkbenchProps {
 
 /**
  * 巡检工作台分两栏：
- * - 左栏（桌面）：3D 实景特写 + 观察/仪器检测靶点 + 遥测判据屏，是"做检查"的地方；
- * - 右栏：处置单，只负责填结论（巡检点说明 → 处置结果 → 提交），不重复检测操作。
+ * - 左栏（桌面）：3D 实景特写 + 仪器检测靶点 + 遥测读数屏，是"做检查"的地方；
+ * - 右栏：处置单，只负责填结论（处置结果 → 取证 → 提交），不重复检测操作。
  * 窄屏没有左栏，操作区以 compact 形式并入右栏，保证流程不断。
  */
 export function ToolWorkbench({
@@ -82,13 +98,13 @@ export function ToolWorkbench({
   evidenceAttached,
   evidenceDataUrl,
   evidencePerspective,
-  observationText,
   readings,
   reviewChances = 0,
   message,
+  permitSignoff = null,
   onSyncRosterTo3D,
+  onPermitSign,
   onToolAction,
-  onVisualInspect,
   onDisposition,
   onCapture,
   onRequestDrone,
@@ -110,9 +126,24 @@ export function ToolWorkbench({
     toolId: Act1Tool;
     specs: Act1ActionSpec[];
   } | null>(null);
-  const [permitVerified, setPermitVerified] = useState<boolean>(
-    () => Boolean(disposition)
+
+  const isCrewPoint = point.id === 'a2-crew';
+  /** 班前会名册与 3D 现场人员同源：左栏人员列表与右栏名册共用同一份 roster。 */
+  const permitRoster = useMemo(
+    () => generateWorkPermitRoster(seed, variant, 0),
+    [seed, variant]
   );
+  /** 左上菜单的选中项：班前会是人员槽位，其余巡检点是检测项。 */
+  const [selectedActionId, setSelectedActionId] = useState<string | null>(null);
+  const { focusedSlot, select: selectCrewSlot } = useCrewFocus();
+
+  useEffect(() => {
+    if (!isCrewPoint) return;
+    onSyncRosterTo3D?.(permitRoster);
+    return () => {
+      setFocusedCrewSlot(null);
+    };
+  }, [isCrewPoint, permitRoster, onSyncRosterTo3D]);
 
   useEffect(() => {
     if (!needsEvidence) return;
@@ -173,6 +204,79 @@ export function ToolWorkbench({
 
   const completedIds = useMemo(() => new Set(completedActions), [completedActions]);
 
+  /** 检测项菜单：必测项在前、专项复核在后，与原来按钮的层级一致。 */
+  const detectionMenuItems: SceneMenuItem[] = useMemo(
+    () => [
+      ...requiredDetectionActions.map((action) => {
+        const done = completedIds.has(action.id) || covered;
+        return {
+          key: action.id,
+          label: action.label,
+          sublabel: done
+            ? '已完成'
+            : action.id === 'drone-recon'
+              ? '升空取证'
+              : '必测项',
+          glyph: action.id === 'drone-recon' ? ('drone' as const) : action.tool,
+          done,
+          disabled: !observed || (action.id === 'drone-recon' && done),
+          onSelect: () => {
+            setSelectedActionId(action.id);
+            if (action.id === 'drone-recon') {
+              onRequestDrone();
+              return;
+            }
+            setModeChoices(null);
+            setDrawerAction(action);
+          },
+        };
+      }),
+      ...auxiliaryDetectionActions.map((action) => {
+        const done = completedIds.has(action.id);
+        return {
+          key: action.id,
+          label: action.label,
+          sublabel: done ? '已完成' : '专项复核',
+          glyph: action.tool,
+          emphasis: 'secondary' as const,
+          done,
+          disabled: !observed,
+          onSelect: () => {
+            setSelectedActionId(action.id);
+            setModeChoices(null);
+            setDrawerAction(action);
+          },
+        };
+      }),
+    ],
+    [
+      requiredDetectionActions,
+      auxiliaryDetectionActions,
+      completedIds,
+      covered,
+      observed,
+      onRequestDrone,
+    ]
+  );
+
+  /** 班前会点位上，左上菜单换成人员列表；其余点位是检测项菜单。 */
+  const sceneMenuItems = useMemo(
+    () =>
+      isCrewPoint
+        ? buildCrewMenuItems(permitRoster, selectCrewSlot)
+        : detectionMenuItems,
+    [isCrewPoint, permitRoster, selectCrewSlot, detectionMenuItems]
+  );
+
+  const selectedActionKey =
+    selectedActionId && detectionMenuItems.some((item) => item.key === selectedActionId)
+      ? selectedActionId
+      : detectionMenuItems[0]?.key ?? null;
+
+  const sceneMenuSelection = isCrewPoint
+    ? crewMenuKey(focusedSlot)
+    : selectedActionKey;
+
   const handleDrawerSelect = (toolId: Act1Tool) => {
     if (!drawerAction) return;
     const action = drawerAction;
@@ -216,178 +320,39 @@ export function ToolWorkbench({
 
   return (
     <>
-      <div className="modal-backdrop fixed inset-0 z-40 flex items-center justify-center lg:justify-between overflow-hidden bg-slate-950/20 p-3 pointer-events-auto select-none sm:p-5 lg:px-7">
-        {/* Left-Side Interactive 3D Viewport & Instrument HUD */}
-        <div className="relative hidden lg:flex flex-col justify-between h-[86vh] flex-1 mr-6 rounded-xl border border-sky-400/40 bg-gradient-to-t from-slate-950/75 via-transparent to-slate-950/45 p-4 pointer-events-auto">
-          <div className="flex items-center justify-between gap-2">
-            <div className="inline-flex items-center gap-2 rounded-md border border-sky-400/50 bg-slate-950/85 px-3 py-1.5 font-mono text-xs text-sky-200 shadow-lg">
+      <div className="modal-backdrop fixed inset-0 z-40 flex items-center justify-center lg:justify-between overflow-hidden bg-slate-950/25 lg:bg-transparent p-3 pointer-events-auto select-none sm:p-5 lg:px-7">
+        {/* Left-Side 3D Viewport：不铺任何底色，实景 100% 透出 */}
+        <div className="relative hidden lg:flex h-[86vh] flex-1 mr-6 flex-col justify-between pointer-events-auto">
+          <div className="flex items-start justify-between gap-3">
+            {/* 左上：可选项目菜单（巡检检测项 / 班前会人员，同一套外观 + 滑动强调框） */}
+            <div className="w-[292px] max-w-[52%]">
+              <SceneMenu
+                items={sceneMenuItems}
+                selectedKey={sceneMenuSelection}
+                ariaLabel={isCrewPoint ? '班前会人员列表' : '现场检测项'}
+              />
+            </div>
+
+            <div className="inline-flex shrink-0 items-center gap-1.5 rounded border border-sky-400/40 bg-slate-950/80 px-2.5 py-1 font-mono text-[11px] text-sky-200 shadow-lg">
               <ScanLine className="h-3.5 w-3.5 text-sky-400" />
-              <span>3D 实景特写 · {detail?.bayName ?? point.zone}</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="rounded border border-emerald-500/40 bg-emerald-950/80 px-2.5 py-1 font-mono text-[11px] text-emerald-300">
-                可直接点击 3D 视窗靶点实操
-              </span>
-              <span className="rounded border border-slate-700/80 bg-slate-950/80 px-2.5 py-1 font-mono text-[11px] text-slate-300">
-                检查机会 {reviewChances}
-              </span>
-              <span className="rounded border border-slate-700/80 bg-slate-950/80 px-2.5 py-1 font-mono text-[11px] text-slate-300">
-                坐标 X {point.x.toFixed(1)} / Z {point.z.toFixed(1)}
-              </span>
+              <span>3D 实景 · {detail?.bayName ?? point.zone}</span>
             </div>
           </div>
 
-          {/* Interactive 3D Target Reticle Hotspots overlaid on the 3D close-up */}
-          <div className="relative my-auto flex flex-col items-center justify-center gap-3 py-4">
-            <div className="flex flex-wrap items-center justify-center gap-3">
-              <button
-                type="button"
-                onClick={onVisualInspect}
-                className={`group flex items-center gap-2 rounded-full border px-3.5 py-2 text-xs font-bold shadow-lg backdrop-blur-md transition-all cursor-pointer ${
-                  observed
-                    ? 'border-emerald-400/80 bg-emerald-950/80 text-emerald-200 hover:bg-emerald-900/90'
-                    : 'border-sky-400 bg-sky-950/85 text-sky-100 ring-2 ring-sky-400/40 hover:bg-sky-900'
-                }`}
-              >
-                <Eye className="h-4 w-4 text-sky-300" />
-                <span>[1] 3D 实景观察：{point.shortName}</span>
-                {observed && <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" />}
-              </button>
-
-              {requiredDetectionActions.map((action) => {
-                const done = completedIds.has(action.id) || covered;
-                return (
-                  <button
-                    key={action.id}
-                    type="button"
-                    disabled={!observed || (action.id === 'drone-recon' && done)}
-                    onClick={() => {
-                      if (action.id === 'drone-recon') {
-                        onRequestDrone();
-                      } else {
-                        setModeChoices(null);
-                        setDrawerAction(action);
-                      }
-                    }}
-                    className={`group flex items-center gap-2 rounded-full border px-3.5 py-2 text-xs font-bold shadow-lg backdrop-blur-md transition-all ${
-                      !observed
-                        ? 'cursor-not-allowed border-slate-700 bg-slate-950/65 text-slate-500'
-                        : done
-                          ? 'cursor-pointer border-emerald-400/80 bg-emerald-950/80 text-emerald-200 hover:bg-emerald-900/90'
-                          : 'cursor-pointer border-amber-400 bg-amber-950/85 text-amber-100 ring-2 ring-amber-400/40 hover:bg-amber-900/90'
-                    }`}
-                  >
-                    <Crosshair className="h-4 w-4 text-amber-300" />
-                    <span>[2] 实景测点：{action.label}</span>
-                    {done && <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" />}
-                  </button>
-                );
-              })}
-
-              {auxiliaryDetectionActions.map((action) => {
-                const done = completedIds.has(action.id);
-                return (
-                  <button
-                    key={action.id}
-                    type="button"
-                    disabled={!observed}
-                    onClick={() => {
-                      setModeChoices(null);
-                      setDrawerAction(action);
-                    }}
-                    className={`group flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-semibold shadow-lg backdrop-blur-md transition-all ${
-                      !observed
-                        ? 'cursor-not-allowed border-slate-700 bg-slate-950/60 text-slate-500'
-                        : done
-                          ? 'cursor-pointer border-emerald-400/70 bg-emerald-950/75 text-emerald-200'
-                          : 'cursor-pointer border-sky-400/70 bg-slate-950/80 text-sky-200 hover:border-sky-300 hover:bg-sky-950/90'
-                    }`}
-                  >
-                    <Sparkles className="h-3.5 w-3.5 text-sky-300" />
-                    <span>[专项复核] {action.label}</span>
-                    {done && <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" />}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* Bottom 3D Instrument Telemetry & Scene Clue Card */}
+          {/* 底部读数位：巡检点是仪器遥测，班前会点是所选人员的档案 */}
           <div className="space-y-2">
-            {observed && (point.id !== 'a2-crew' || permitVerified) && (
-              <div className="rounded-lg border border-sky-500/40 bg-slate-950/90 px-4 py-3 text-slate-100 shadow-lg">
-                <div className="flex items-center justify-between gap-2 font-mono text-[11px] text-sky-300">
-                  <span className="flex items-center gap-1.5 font-bold">
-                    <Activity className="h-3.5 w-3.5 text-sky-400" />
-                    <span>3D 现场遥测读数屏</span>
-                  </span>
-                  <span>环温 T₀ = {ambientC} ℃</span>
-                </div>
-
-                {readout ? (
-                  <>
-                    <div className="mt-2 flex items-end justify-between gap-4">
-                      <div className="min-w-0">
-                        <div className="font-mono text-[11px] font-bold tracking-[0.12em] text-sky-300/90">
-                          {readout.primary.label}
-                        </div>
-                        <div className="mt-1 flex items-baseline gap-2">
-                          <span
-                            className="text-[54px] font-black leading-none tabular-nums text-white"
-                            style={{
-                              textShadow:
-                                '0 0 22px rgba(186,230,253,0.45), 0 0 48px rgba(56,189,248,0.22)',
-                            }}
-                          >
-                            {readout.primary.value}
-                          </span>
-                          {readout.primary.unit && (
-                            <span className="text-xl font-bold text-slate-300">
-                              {readout.primary.unit}
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-
-                    {readout.secondary.length > 0 && (
-                      <div className="mt-2.5 flex flex-wrap items-stretch gap-1.5">
-                        {readout.secondary.map((metric) => (
-                          <span
-                            key={metric.key}
-                            className="inline-flex items-baseline gap-1.5 rounded border border-slate-600/70 bg-slate-800/60 px-2 py-1 font-mono text-slate-200"
-                          >
-                            <span className="text-[11px] opacity-80">{metric.label}</span>
-                            <span className="text-base font-black tabular-nums">
-                              {metric.value}
-                            </span>
-                            {metric.unit && (
-                              <span className="text-[11px] opacity-80">{metric.unit}</span>
-                            )}
-                          </span>
-                        ))}
-                      </div>
-                    )}
-
-                    {readout.note && (
-                      <div className="mt-2 border-t border-slate-700/80 pt-1.5 font-mono text-[11px] leading-4 text-slate-500">
-                        <span className="text-sky-300">读数 </span>
-                        {readout.note}
-                      </div>
-                    )}
-                  </>
-                ) : (
-                  <p className="mt-2 rounded border border-slate-700 bg-slate-900/80 px-3 py-2 text-xs leading-5 text-slate-400">
-                    已观察，尚未取得仪器读数 —— 点击上方测点选择仪器检测，读数会在这里放大显示。
-                  </p>
-                )}
-              </div>
+            {isCrewPoint ? (
+              <CrewReadout roster={permitRoster} focusedSlot={focusedSlot} />
+            ) : (
+              readout && (
+                <SceneReadoutFrame
+                  title="3D 现场遥测读数屏"
+                  right={`环温 T₀ = ${ambientC} ℃`}
+                >
+                  <ReadoutMetrics readout={readout} />
+                </SceneReadoutFrame>
+              )
             )}
-
-            <div className="rounded-lg border border-slate-700/70 bg-slate-950/85 px-3.5 py-2.5 text-xs leading-5 text-slate-200 shadow-lg">
-              <span className="font-bold text-sky-300">现场特征：</span>
-              <span>{point.clue}</span>
-            </div>
           </div>
         </div>
 
@@ -397,7 +362,7 @@ export function ToolWorkbench({
           role="dialog"
           aria-modal="true"
           aria-label={`处置单：${point.name}`}
-          className="modal-panel relative flex max-h-[92vh] w-full max-w-[560px] shrink-0 flex-col overflow-hidden rounded-xl border border-slate-300 border-t-4 border-t-amber-500 bg-white text-left text-slate-900 shadow-[0_24px_80px_rgba(2,6,23,0.55)]"
+          className="modal-panel relative flex h-[86vh] max-h-[92vh] w-full max-w-[560px] shrink-0 flex-col overflow-hidden rounded-xl border border-slate-300 border-t-4 border-t-amber-500 bg-white text-left text-slate-900 shadow-[0_24px_80px_rgba(2,6,23,0.55)]"
         >
           <header className="flex items-start justify-between gap-3 border-b border-slate-200 bg-slate-50 px-5 py-3">
             <div className="min-w-0">
@@ -426,40 +391,54 @@ export function ToolWorkbench({
           </header>
 
           <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-5 py-3.5">
-            <section className="rounded-lg border border-slate-200 bg-white p-3 shadow-sm">
-              <h3 className="mb-1 text-xs font-bold tracking-wide text-slate-700">
-                巡检点说明
-              </h3>
-              <p className="text-[12.5px] leading-5 text-slate-700">
-                {detail?.taskIntro ?? point.clue}
-              </p>
-              <div className="mt-2 flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 px-2.5 py-1.5">
+            {isCrewPoint ? (
+              <div className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 px-2.5 py-1.5">
                 <ShieldCheck className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-700" />
                 <div className="min-w-0 text-[11.5px] leading-4 text-amber-900">
                   <span className="font-bold">安规要点 </span>
-                  {detail?.safetyRequirement ?? '与带电体保持 3 m 以上。'}
+                  {detail?.safetyRequirement ?? '证件不在有效期内的人员，不得进入检修作业面。'}
                 </div>
               </div>
-            </section>
+            ) : (
+              <section className="rounded-lg border border-slate-200 bg-white p-3 shadow-sm">
+                <h3 className="mb-1 text-xs font-bold tracking-wide text-slate-700">
+                  巡检点说明
+                </h3>
+                <p className="text-[12.5px] leading-5 text-slate-700">
+                  {detail?.taskIntro ?? point.clue}
+                </p>
+                <div className="mt-2 flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 px-2.5 py-1.5">
+                  <ShieldCheck className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-700" />
+                  <div className="min-w-0 text-[11.5px] leading-4 text-amber-900">
+                    <span className="font-bold">安规要点 </span>
+                    {detail?.safetyRequirement ?? '与带电体保持 3 m 以上。'}
+                  </div>
+                </div>
+              </section>
+            )}
 
-            {/* 第二幕 1# 主变检修班前会专属：《变电站第一种工作票》现场人证与着装核对面板 */}
-            {point.id === 'a2-crew' && (
+            {/* 第二幕 1# 主变检修班前会专属：名册逐人核验（3D 近景机位在左侧视窗） */}
+            {isCrewPoint && (
               <WorkPermitPanel
-                seed={seed}
-                variant={variant}
-                observed={observed}
-                permitVerified={permitVerified}
-                onSyncRosterTo3D={onSyncRosterTo3D}
-                onCompletePermitCheck={() => {
-                  setPermitVerified(true);
-                  if (!observed) {
-                    onVisualInspect();
-                  }
-                }}
+                roster={permitRoster}
+                permitSigned={Boolean(permitSignoff)}
+                signedEntries={permitSignoff?.entries}
+                onSign={onPermitSign}
               />
             )}
 
-            {/* 窄屏没有左侧 3D 视窗：观察与仪器检测在这里完成，避免流程断掉 */}
+            {/* 窄屏看不到左侧 3D：人员列表与档案同样要能操作 */}
+            {isCrewPoint && (
+              <div className="lg:hidden">
+                <CrewStage
+                  roster={permitRoster}
+                  focusedSlot={focusedSlot}
+                  onSelect={selectCrewSlot}
+                />
+              </div>
+            )}
+
+            {/* 窄屏没有左侧 3D 视窗：仪器检测在这里完成，避免流程断掉 */}
             <section className="rounded-lg border border-sky-200 bg-sky-50/70 p-3 lg:hidden">
               <div className="flex items-center justify-between gap-2">
                 <h3 className="text-xs font-bold tracking-wide text-sky-900">
@@ -471,27 +450,6 @@ export function ToolWorkbench({
               </div>
 
               <div className="mt-2 space-y-1.5">
-                <div className="flex items-center justify-between gap-2 rounded-md border border-slate-200 bg-white px-2.5 py-1.5">
-                  <span className="flex min-w-0 items-center gap-1.5 text-[12px] font-semibold text-slate-800">
-                    <Eye className="h-3.5 w-3.5 shrink-0 text-sky-600" />
-                    <span className="truncate">现场观察</span>
-                    {observed && (
-                      <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-600" />
-                    )}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={onVisualInspect}
-                    className={`flex min-h-8 shrink-0 items-center rounded-md border px-2.5 py-1 text-xs font-bold transition-colors cursor-pointer ${
-                      observed
-                        ? 'border-emerald-300 bg-emerald-50 text-emerald-700'
-                        : 'border-sky-500 bg-sky-600 text-white'
-                    }`}
-                  >
-                    {observed ? '重新观察' : '观察'}
-                  </button>
-                </div>
-
                 {requiredDetectionActions.map((action) => {
                   const done = completedIds.has(action.id) || covered;
                   return (
@@ -565,12 +523,6 @@ export function ToolWorkbench({
                   );
                 })}
               </div>
-
-              {observed && (
-                <p className="mt-2 rounded bg-white/85 px-2.5 py-1.5 text-[11.5px] leading-4 text-slate-600">
-                  {observationText}
-                </p>
-              )}
             </section>
 
             <section className="rounded-lg border border-slate-200 bg-white p-3 shadow-sm">

@@ -1,7 +1,6 @@
 import type { Act1Variant } from './act1';
 
 export type CrewBadgeStatus = 'valid' | 'expired' | 'missing';
-export type CrewUniformStatus = 'standard' | 'irregular';
 /**
  * 安全帽状态固定为 standard（合格佩戴）。
  * 根据建模约束，人头与安全帽共享网格材质，绝不生成安全帽缺陷。
@@ -35,13 +34,11 @@ export interface CrewWorkerVisualSpec {
   presentOnSite: boolean;
   /** 工作证/特种作业证状态（映射到 3D 胸牌颜色与挂牌显隐） */
   badgeStatus: CrewBadgeStatus;
-  /** 工作服状态（映射到 3D 模型服装材质颜色与反光条显隐） */
-  uniformStatus: CrewUniformStatus;
   /** 安全帽状态（始终为 standard，不生成安全帽缺陷） */
   helmetStatus: CrewHelmetStatus;
   /** 3D 站位坐标（Act 2 班前会列队位置，等距一字排开面向东侧相机） */
   act2Position: { x: number; y: number; z: number };
-  /** 3D 服装主色 Hex */
+  /** 3D 服装主色 Hex（负责人深色西装，班组成员统一蓝色阻燃工装） */
   uniformColorHex: number;
   /** 3D 胸牌颜色 Hex（null 表示胸前未挂工作证） */
   badgeColorHex: number | null;
@@ -64,34 +61,42 @@ export interface WorkPermitRoster {
   headcountMatched: boolean;
   /** 现场是否存在任何胸牌过期或无证人员 */
   hasBadgeDefect: boolean;
-  /** 现场是否存在任何违规便装人员 */
-  hasUniformDefect: boolean;
   /** 工作负责人 */
   leader: CrewWorkerVisualSpec;
   /** 班组成员槽位 */
   workers: CrewWorkerVisualSpec[];
   /** 当前实际站在 3D 现场的所有人员（按从北向南列队顺序排列，供 3D 生成与镜头对焦使用） */
   sceneWorkers: CrewWorkerVisualSpec[];
-  /** 是否存在任何票面/人员资质/着装/人数违章 */
+  /** 是否存在任何票面/人员资质/人数违章 */
   hasDefect: boolean;
-  /** 核对完成后的汇总描述 */
-  overallSummary: string;
+}
+
+/** 名册逐人核验时可指认的违规类型（均为 3D 现场目视可直接判定的事实）。 */
+export type CrewViolationKind = 'absent' | 'cert-expired' | 'no-helmet';
+
+export interface CrewViolationOption {
+  kind: CrewViolationKind;
+  label: string;
+}
+
+export const CREW_VIOLATION_OPTIONS: readonly CrewViolationOption[] = [
+  { kind: 'absent', label: '人员未到' },
+  { kind: 'cert-expired', label: '证件过期' },
+  { kind: 'no-helmet', label: '安全帽未佩戴' },
+];
+
+/** 单个人的核验结论：未核验（passed=null）/ 合格（true）/ 违规（false + 违规类型）。 */
+export interface CrewVerificationEntry {
+  passed: boolean | null;
+  violation: CrewViolationKind | null;
 }
 
 /**
- * 玩家通过目视观察 3D 现场人物模型后，在《工作票》核对表上填写的四项检查结论。
+ * 玩家通过目视观察 3D 现场人物模型后，在处置单名册上逐人填写的核验结论。
+ * key 为票面登记人员的 nodeName。
  */
 export interface WorkPermitPlayerJudgment {
-  /** 玩家清点的 3D 现场实到总人数（含负责人） */
-  countedSiteTotal: number | null;
-  /** 实到人数与工作票票面登记人数是否相符 */
-  headcountVerdict: 'matched' | 'mismatched' | null;
-  /** 胸前工作证 / 特种作业证目视核查结论 */
-  badgeVerdict: 'all_valid' | 'has_invalid' | null;
-  /** 阻燃工作服目视核查结论 */
-  uniformVerdict: 'all_standard' | 'has_irregular' | null;
-  /** 安全帽规范佩戴目视核查结论 */
-  helmetVerdict: 'all_standard' | 'has_defect' | null;
+  entries: Record<string, CrewVerificationEntry>;
 }
 
 export interface WorkPermitEvaluationResult {
@@ -124,8 +129,6 @@ export const ACT2_CREW_LINEUP_POSITIONS: Readonly<
 export const CREW_COLORS = {
   leaderSuitHex: 0x1e293b,
   standardBlueUniformHex: 0x1d4ed8,
-  irregularJacketAmberHex: 0xc2410c,
-  irregularJacketCrimsonHex: 0x991b1b,
   validBadgeHex: 0x10b981,
   expiredBadgeHex: 0xef4444,
 } as const;
@@ -207,12 +210,12 @@ export function computeLineupPosition(
  *
  * - 当 variant !== 'D'（正常合格班组）：
  *   - 根据 seed 动态生成 4 人（负责人 + 3 组员）或 5 人（负责人 + 4 组员），票面登记人数与 3D 现场实到模型数量完全一致；
- *   - 全员穿蓝色阻燃工作服（带反光条）、胸前佩戴绿色有效工作证、头戴标准安全帽。
+ *   - 全员穿蓝色阻燃工作服、胸前佩戴绿色有效工作证、头戴标准安全帽。
  * - 当 variant === 'D'（班组资质与现场违章变体）：
  *   - #3 周大勇（持证电焊工）胸前工作证有效期为 2025-06（红色超期胸牌）；
- *   - #2 组员穿暗橙色便装（无阻燃反光条）；
- *   - 根据 seed 子模式，还可能伴随现场实到人数与票面不符（例如未登记人员无证穿便装混入列队，或已登记人员未到岗）。
+ *   - 根据 seed 子模式，还可能伴随现场实到人数与票面不符（例如未登记人员无证混入列队，或已登记人员未到岗）。
  * - 安全帽在任何种子和变体下始终为 standard（合格佩戴）。
+ * - 工装只作现场识别，不作为《工作票》名册核验项。
  */
 export function generateWorkPermitRoster(
   seed: number,
@@ -236,7 +239,6 @@ export function generateWorkPermitRoster(
     listedOnPermit: true,
     presentOnSite: true,
     badgeStatus: 'valid',
-    uniformStatus: 'standard',
     helmetStatus: 'standard',
     act2Position: ACT2_CREW_LINEUP_POSITIONS.MEMBER_02,
     uniformColorHex: CREW_COLORS.leaderSuitHex,
@@ -295,10 +297,8 @@ export function generateWorkPermitRoster(
     let listedOnPermit = true;
     let presentOnSite = true;
     let badgeStatus: CrewBadgeStatus = 'valid';
-    let uniformStatus: CrewUniformStatus = 'standard';
     let certExpiry =
       ['2027-09', '2027-12', '2027-09', '2028-03'][idx] ?? '2027-09';
-    let uniformColorHex: number = CREW_COLORS.standardBlueUniformHex;
     let badgeColorHex: number | null = CREW_COLORS.validBadgeHex;
     let defectSummary: string | null = null;
 
@@ -313,10 +313,6 @@ export function generateWorkPermitRoster(
         badgeStatus = 'expired';
         badgeColorHex = CREW_COLORS.expiredBadgeHex;
         defectSummary = '特种作业操作证（焊工证）有效期至 2025-06，已超期未复审';
-      } else if (slotIndex === 2) {
-        uniformStatus = 'irregular';
-        uniformColorHex = CREW_COLORS.irregularJacketAmberHex;
-        defectSummary = '未穿蓝色阻燃检修服（着橙褐色便装进场）';
       }
     } else if (defectMode === 2) {
       if (slotIndex === 3) {
@@ -328,22 +324,15 @@ export function generateWorkPermitRoster(
         listedOnPermit = false;
         presentOnSite = true;
         badgeStatus = 'missing';
-        uniformStatus = 'irregular';
-        uniformColorHex = CREW_COLORS.irregularJacketCrimsonHex;
         badgeColorHex = null;
         certExpiry = '无记录';
-        defectSummary =
-          '未在《工作票》班组名单登记、胸前未佩戴工作证、着暗红便装混入检修列队';
+        defectSummary = '未在《工作票》班组名单登记、胸前未佩戴工作证混入检修列队';
       }
     } else if (defectMode === 3) {
       if (slotIndex === 4) {
         listedOnPermit = true;
         presentOnSite = false;
         defectSummary = '工作票已登记但现场未到岗（实到人数少于票面人数）';
-      } else if (slotIndex === 2) {
-        uniformStatus = 'irregular';
-        uniformColorHex = CREW_COLORS.irregularJacketAmberHex;
-        defectSummary = '未穿标准蓝色阻燃工作服（着便装）';
       } else if (slotIndex === 3) {
         certExpiry = '2025-06';
         badgeStatus = 'expired';
@@ -365,10 +354,9 @@ export function generateWorkPermitRoster(
       listedOnPermit,
       presentOnSite,
       badgeStatus,
-      uniformStatus,
       helmetStatus: 'standard',
       act2Position: ACT2_CREW_LINEUP_POSITIONS[nodeName],
-      uniformColorHex,
+      uniformColorHex: CREW_COLORS.standardBlueUniformHex,
       badgeColorHex,
       defectSummary,
     };
@@ -391,26 +379,13 @@ export function generateWorkPermitRoster(
     workers.every((w) => w.listedOnPermit === w.presentOnSite);
 
   const hasBadgeDefect = sceneWorkers.some((w) => w.badgeStatus !== 'valid');
-  const hasUniformDefect = sceneWorkers.some(
-    (w) => w.uniformStatus !== 'standard'
-  );
 
   const workerDefects = workers
     .filter((w) => w.defectSummary !== null)
     .map((w) => `${w.tagCode}${w.name}：${w.defectSummary}`);
 
   const hasDefect =
-    !headcountMatched ||
-    hasBadgeDefect ||
-    hasUniformDefect ||
-    workerDefects.length > 0;
-
-  let overallSummary = `票面登记 ${permitTotalCount} 人，3D 现场实到 ${actualSiteCount} 人（人票相符）；全员工作证在有效期内，全员着蓝色标准阻燃工装、规范佩戴安全帽。`;
-  if (hasDefect) {
-    overallSummary = `票面登记 ${permitTotalCount} 人，3D 现场实到 ${actualSiteCount} 人（${
-      headcountMatched ? '人数相符' : '人数不符'
-    }）；现场检出：${workerDefects.join('；')}。`;
-  }
+    !headcountMatched || hasBadgeDefect || workerDefects.length > 0;
 
   return {
     permitNo: `BDZ1-2026-0815-${String((combinedSeed % 89) + 10).padStart(2, '0')}`,
@@ -423,85 +398,98 @@ export function generateWorkPermitRoster(
     actualSiteCount,
     headcountMatched,
     hasBadgeDefect,
-    hasUniformDefect,
     leader,
     workers,
     sceneWorkers,
     hasDefect,
-    overallSummary,
   };
 }
 
-export function createInitialPermitJudgment(): WorkPermitPlayerJudgment {
-  return {
-    countedSiteTotal: null,
-    headcountVerdict: null,
-    badgeVerdict: null,
-    uniformVerdict: null,
-    helmetVerdict: null,
-  };
+/** 票面登记人员（负责人 + 名单内组员），即处置单名册实际要逐人核验的对象。 */
+export function getPermitListedMembers(
+  roster: WorkPermitRoster
+): CrewWorkerVisualSpec[] {
+  return [roster.leader, ...roster.workers].filter((w) => w.listedOnPermit);
 }
 
 /**
- * 校验玩家在《工作票》现场核对单中填写的目视核查结论是否与 3D 场景中的真实人物模型一致。
+ * 该人员在 3D 现场的真实违规类型；null 表示合规。
+ * 判定优先级与会话现场的可视证据一致：未到场 > 证件无效 > 安全帽。
+ * 工装只作现场识别，不是《工作票》名册的核验项。
+ */
+export function getCrewExpectedViolation(
+  spec: CrewWorkerVisualSpec
+): CrewViolationKind | null {
+  if (!spec.presentOnSite) return 'absent';
+  // 胸前未挂牌即现场无法出示有效证件，按“证件”类违规处理。
+  if (spec.badgeStatus === 'missing') return 'cert-expired';
+  if (spec.badgeStatus === 'expired') return 'cert-expired';
+  if (spec.helmetStatus !== 'standard') return 'no-helmet';
+  return null;
+}
+
+export function createInitialPermitJudgment(
+  roster: WorkPermitRoster
+): WorkPermitPlayerJudgment {
+  const entries: Record<string, CrewVerificationEntry> = {};
+  for (const member of getPermitListedMembers(roster)) {
+    entries[member.nodeName] = { passed: null, violation: null };
+  }
+  return { entries };
+}
+
+/** 该人员是否已给出结论：打勾即合格，打叉即违规（违规类型可留空，签注时按错项计）。 */
+export function isCrewVerificationSettled(
+  entry: CrewVerificationEntry | undefined
+): entry is CrewVerificationEntry {
+  return Boolean(entry) && entry!.passed !== null;
+}
+
+/**
+ * 比对玩家逐人填写的名册核验结论与 3D 现场人物模型。
+ *
+ * 结论对错不再阻断签注：未填全才返回 complete=false；
+ * 填了但与现场不符只记入 mismatches，由第二幕结束时统一扣分。
  */
 export function evaluateWorkPermitJudgment(
   roster: WorkPermitRoster,
   judgment: WorkPermitPlayerJudgment
 ): WorkPermitEvaluationResult {
-  if (
-    judgment.countedSiteTotal === null ||
-    judgment.headcountVerdict === null ||
-    judgment.badgeVerdict === null ||
-    judgment.uniformVerdict === null ||
-    judgment.helmetVerdict === null
-  ) {
+  const members = getPermitListedMembers(roster);
+
+  const unmarked = members.filter(
+    (m) => !judgment.entries[m.nodeName] || judgment.entries[m.nodeName].passed === null
+  );
+  if (unmarked.length > 0) {
     return {
       complete: false,
       accurate: false,
-      mismatches: ['请先完成全部目视核对项的选择。'],
+      mismatches: [
+        `名册还有 ${unmarked.length} 人未给出核验结论：${unmarked
+          .map((m) => m.name)
+          .join('、')}。`,
+      ],
     };
   }
 
   const mismatches: string[] = [];
-
-  if (judgment.countedSiteTotal !== roster.actualSiteCount) {
-    mismatches.push(
-      `现场实到人数清点有误：请切换左侧【全景列队】镜头，重新清点 3D 场景中站立的工作人员总数（含负责人）。`
-    );
-  }
-
-  const expectedHeadcountVerdict = roster.headcountMatched
-    ? 'matched'
-    : 'mismatched';
-  if (judgment.headcountVerdict !== expectedHeadcountVerdict) {
-    mismatches.push(
-      `票面与实到人数比对有误：请对照《工作票》票面登记总人数（${roster.permitTotalCount} 人）与 3D 现场实际到场人数。`
-    );
-  }
-
-  const expectedBadgeVerdict = roster.hasBadgeDefect
-    ? 'has_invalid'
-    : 'all_valid';
-  if (judgment.badgeVerdict !== expectedBadgeVerdict) {
-    mismatches.push(
-      `工作证有效性核对有误：请点击镜头逐一对准现场人员胸前挂牌，核查是否存在红牌超期（2025-06）或胸前未挂牌人员。`
-    );
-  }
-
-  const expectedUniformVerdict = roster.hasUniformDefect
-    ? 'has_irregular'
-    : 'all_standard';
-  if (judgment.uniformVerdict !== expectedUniformVerdict) {
-    mismatches.push(
-      `工作服着装核对有误：请观察 3D 现场队列中全员是否均穿蓝色阻燃工装（带银色反光条），有无穿便装人员。`
-    );
-  }
-
-  if (judgment.helmetVerdict !== 'all_standard') {
-    mismatches.push(
-      `安全帽佩戴核对有误：请观察 3D 现场队列，当前在场人员均已规范佩戴安全帽。`
-    );
+  for (const member of members) {
+    const entry = judgment.entries[member.nodeName];
+    const expected = getCrewExpectedViolation(member);
+    const label = `#${member.tagCode.replace('#', '')} ${member.name}`;
+    if (expected === null) {
+      if (entry.passed === false) {
+        mismatches.push(`${label}：现场核验合规，不应记为违规。`);
+      }
+      continue;
+    }
+    const expectedLabel =
+      CREW_VIOLATION_OPTIONS.find((o) => o.kind === expected)?.label ?? expected;
+    if (entry.passed === true) {
+      mismatches.push(`${label}：存在「${expectedLabel}」，应记为违规。`);
+    } else if (entry.violation !== expected) {
+      mismatches.push(`${label}：违规类型判断有误，应为「${expectedLabel}」。`);
+    }
   }
 
   return {
