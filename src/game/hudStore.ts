@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from 'react';
 import { GAME_TEXT, SAFETY_LABELS } from '../config/gameText';
-import { ACT1_REVIEW_CHANCES } from './act1';
+import { ACT1_REVIEW_CHANCES } from './scoring';
 import type {
   CameraPerspective,
   MixamoMotionState,

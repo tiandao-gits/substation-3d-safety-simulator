@@ -1,6 +1,10 @@
-import { useEffect, type Dispatch, type MutableRefObject } from 'react';
 import {
-  ACT1_REVIEW_CHANCES,
+  useEffect,
+  useRef,
+  type Dispatch,
+  type MutableRefObject,
+} from 'react';
+import {
   countResolvedPoints,
   getAct1Point,
   getActPointIds,
@@ -8,6 +12,7 @@ import {
   type Act1PointId,
   type ActNo,
 } from '../game/act1';
+import { ACT1_REVIEW_CHANCES } from '../game/scoring';
 import {
   findStandableSpotNear,
   siteGroundHeight,
@@ -15,6 +20,7 @@ import {
   type PlayerState,
 } from '../game/rules';
 import { resolveBgmKey } from '../config/audio';
+import { QA_ENABLED } from '../config/debugFlags';
 import { soundEngine } from '../game/sound';
 import { hudStore } from '../game/hudStore';
 import { clearSave, DEFAULT_SETTINGS, writeSave } from '../game/save';
@@ -37,6 +43,8 @@ export interface UseStoryBootstrapOptions {
    * 而不是直接把人放在巡检点旁。由 App 提供（内部调 applyActSpawn）。
    */
   onPlayActCutscene?: (act: ActNo) => void;
+  /** 自动存档失败时调用；同一会话只触发一次。 */
+  onSaveError?: () => void;
 }
 
 /**
@@ -55,8 +63,22 @@ export function useStoryBootstrap({
   dispatchStory,
   playerRef,
   onPlayActCutscene,
+  onSaveError,
 }: UseStoryBootstrapOptions): void {
   const storyPhase = story.phase;
+  const onSaveErrorRef = useRef(onSaveError);
+  const saveErrorNotifiedRef = useRef(false);
+
+  useEffect(() => {
+    onSaveErrorRef.current = onSaveError;
+  }, [onSaveError]);
+
+  /** 存档失败只提示一次，避免每次自动保存都弹同一个错误。 */
+  const notifySaveError = () => {
+    if (saveErrorNotifiedRef.current) return;
+    saveErrorNotifiedRef.current = true;
+    onSaveErrorRef.current?.();
+  };
 
   useEffect(() => {
     soundEngine.setBgm(resolveBgmKey(gameState, storyPhase));
@@ -80,7 +102,8 @@ export function useStoryBootstrap({
 
   useEffect(() => {
     const id = window.setTimeout(() => {
-      writeSave(storyToSave(story, DEFAULT_SETTINGS));
+      const saved = writeSave(storyToSave(story, DEFAULT_SETTINGS));
+      if (!saved) notifySaveError();
     }, 500);
     return () => window.clearTimeout(id);
   }, [
@@ -96,6 +119,27 @@ export function useStoryBootstrap({
     story.seed,
   ]);
 
+  // 防抖窗口内关闭/切走页面时，浏览器可能在 500ms 前就冻结脚本。
+  // pagehide 与 visibilitychange 各补写一次，保证最后一次操作落盘。
+  useEffect(() => {
+    const flush = () => {
+      const saved = writeSave(
+        storyToSave(storyRef.current, DEFAULT_SETTINGS)
+      );
+      if (!saved) notifySaveError();
+    };
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') flush();
+    };
+    window.addEventListener('pagehide', flush);
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    return () => {
+      window.removeEventListener('pagehide', flush);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   useEffect(() => {
     if (initialAutostart && storyRef.current.phase === 'title') {
       dispatchStory({ type: 'start' });
@@ -104,6 +148,8 @@ export function useStoryBootstrap({
   }, []);
 
   useEffect(() => {
+    // 正式构建里整段会在打包时被裁掉，学员无法用 URL 跳关/改结局。
+    if (!QA_ENABLED) return;
     const params = new URLSearchParams(window.location.search);
     const qa = params.get('qa');
     if (!qa) return;

@@ -9,7 +9,6 @@ import {
 } from '../../config/dossier';
 import { INSPECTION_POINT_DETAILS } from '../../config/inspectionDetails';
 import {
-  ACT1_REVIEW_CHANCES,
   ACT_AMBIENT,
   countResolvedPoints,
   dispositionNeedsEvidence,
@@ -25,6 +24,7 @@ import {
   type Act1State,
   type ActNo,
 } from '../../game/act1';
+import { ACT1_REVIEW_CHANCES } from '../../game/scoring';
 import {
   Badge,
   DossierPane,

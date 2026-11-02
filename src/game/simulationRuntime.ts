@@ -4,7 +4,6 @@ import { ACT_BRIEFING_TRIGGERS } from '../config/dialogues';
 import { MESSAGES } from '../config/gameText';
 import type { ActiveModal } from '../ui/modals/ModalHost';
 import {
-  ACT1_REVIEW_CHANCES,
   countResolvedPoints,
   findNearestOpenAct1Point,
   getAct1Point,
@@ -13,6 +12,7 @@ import {
   isPointResolved,
   type Act1PointId,
 } from './act1';
+import { ACT1_REVIEW_CHANCES, DRONE_VIOLATION_CHANCE_COST, DRONE_VIOLATION_PENALTY } from './scoring';
 import {
   constrainApartmentCameraPosition,
   getApartmentDoorInteraction,
@@ -547,9 +547,9 @@ export function startSimulationRuntime({
               type: 'act1-penalty',
               id: `drone-violation-${Math.floor(nowMs)}`,
               label: '无人机飞越运行间隔',
-              points: 8,
-              chanceCost: 1,
-              message: `无人机飞越${violation}正上方：检查机会 −1。`,
+              points: DRONE_VIOLATION_PENALTY,
+              chanceCost: DRONE_VIOLATION_CHANCE_COST,
+              message: `无人机飞越${violation}正上方：检查机会 −${DRONE_VIOLATION_CHANCE_COST}。`,
             });
           }
         }

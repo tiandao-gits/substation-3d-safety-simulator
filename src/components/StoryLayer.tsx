@@ -24,12 +24,12 @@ import {
 import type { CaptureEvidenceResult } from '../game/evidence';
 import type { StorySettings } from '../game/save';
 import {
-  PROLOGUE_DEFER_PENALTY,
   sceneFor,
   settlementScoreForStory,
   type StoryAction,
   type StoryState,
 } from '../game/storySession';
+import { PROLOGUE_DEFER_PENALTY } from '../game/scoring';
 import type { CameraPerspective } from '../game/rules';
 import { soundEngine } from '../game/sound';
 import type { WorkPermitRoster } from '../game/workPermit';

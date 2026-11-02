@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { ACT1_REVIEW_CHANCES } from '../../game/act1';
+import { ACT1_REVIEW_CHANCES } from '../../game/scoring';
 import { HudPanel } from '../primitives/HudPanel';
 
 interface StatusBlockProps {

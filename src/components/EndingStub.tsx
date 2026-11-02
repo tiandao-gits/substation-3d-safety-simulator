@@ -4,7 +4,7 @@ import { pickEndingAccident } from '../game/endingResult';
 import {
   PASS_SCORE_THRESHOLD,
   UNHANDLED_HAZARD_PENALTY,
-} from '../game/storySession';
+} from '../game/scoring';
 import type { Act1State, Act1FindingClass } from '../game/act1';
 import type { EndingKind } from '../game/storyTypes';
 

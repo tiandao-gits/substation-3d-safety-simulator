@@ -14,7 +14,6 @@ import {
 } from '../config/dialogues';
 import { ACT_START_SPAWNS } from '../config/actSpawns';
 import {
-  ACT1_SCORE_BASE,
   ACT_POINTS,
   applyAct1Action,
   applyAct1Penalty,
@@ -42,6 +41,12 @@ import {
 } from './act1';
 import type { EvidenceRecord } from './evidence';
 import { trimEvidence } from './evidence';
+import {
+  ACT1_SCORE_BASE,
+  PASS_SCORE_THRESHOLD,
+  PROLOGUE_DEFER_PENALTY,
+  UNHANDLED_HAZARD_PENALTY,
+} from './scoring';
 import {
   generateWorkPermitRoster,
   getCrewExpectedViolation,
@@ -83,16 +88,6 @@ export interface StoryState {
   evidence: EvidenceRecord[];
   message: string | null;
 }
-
-/** 隐患全部闭环后，总分达到该值才判 GOOD，低于则按延误工期责任判 BAD。 */
-export const PASS_SCORE_THRESHOLD = 80;
-/** 结算时每项未闭环隐患的扣分，使事故结局必然低于及格线。 */
-export const UNHANDLED_HAZARD_PENALTY = 25;
-/**
- * 序章选择"能晚上补的先补，补不了的当场停"（pro_policy=defer）的起手扣分。
- * 把整改留到夜间等于让风险多存在半天，评分上必须体现，否则这个选项没有代价。
- */
-export const PROLOGUE_DEFER_PENALTY = 5;
 
 /** 终局评分：累计总分减去未闭环隐患扣分。 */
 export function settlementScore(

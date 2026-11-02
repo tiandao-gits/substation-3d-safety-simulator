@@ -11,6 +11,7 @@ import {
   type VnState,
 } from '../game/vn';
 import { SPEAKER_NAMES, VN_BACKGROUNDS, VN_CHARACTERS, VN_PROP_FRAMES } from '../config/vnAssets';
+import { QA_ENABLED } from '../config/debugFlags';
 import { soundEngine } from '../game/sound';
 import { useFocusTrap } from './useFocusTrap';
 import { CornerBrackets, ImageWithFallback } from './VnChrome';
@@ -184,7 +185,7 @@ export function VnOverlay({
 
   // Check if QA mock view is requested via URL or query
   const isQaMock = useMemo(() => {
-    if (typeof window === 'undefined') return false;
+    if (!QA_ENABLED || typeof window === 'undefined') return false;
     const params = new URLSearchParams(window.location.search);
     return params.get('qa') === 'mock' || params.get('mock') === '1';
   }, []);

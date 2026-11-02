@@ -2,8 +2,6 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   ACT1_POINTS,
-  ACT1_REVIEW_CHANCES,
-  ACT1_SCORE_BASE,
   applyAct1Action,
   attachAct1Evidence,
   canCaptureDroneRecon,
@@ -14,7 +12,6 @@ import {
   classifyTopOilDefect,
   countResolvedPoints,
   createAct1State,
-  DISPOSITION_ERROR_PENALTY,
   evaluateActOutcome,
   findNearestOpenAct1Point,
   getAct1PointStatus,
@@ -25,8 +22,6 @@ import {
   isPointCovered,
   isPointResolved,
   normalizeAct1State,
-  PERMIT_MISMATCH_PENALTY,
-  PERMIT_UNSIGNED_PENALTY,
   pickAct1Variant,
   setAct1Disposition,
   settleActDispositions,
@@ -38,6 +33,14 @@ import {
   type Act1Variant,
   type ActNo,
 } from './act1';
+import {
+  ACT1_REVIEW_CHANCES,
+  ACT1_SCORE_BASE,
+  DISPOSITION_ERROR_PENALTY,
+  PERMIT_MISMATCH_PENALTY,
+  PERMIT_UNSIGNED_PENALTY,
+  WRONG_TOOL_PENALTY,
+} from './scoring';
 import {
   createInitialPermitJudgment,
   generateWorkPermitRoster,
@@ -295,7 +298,7 @@ test('wrong instrument costs a chance; wrong point does not', () => {
 
   const wrongTool = applyAct1Action(s, 'bay-temp', 'multimeter', 'invalid');
   assert.equal(wrongTool.result.errorType, 'wrong-tool');
-  assert.equal(wrongTool.result.penalty, 8);
+  assert.equal(wrongTool.result.penalty, WRONG_TOOL_PENALTY);
   assert.equal(wrongTool.state.reviewChances, ACT1_REVIEW_CHANCES - 1);
   assert.equal(wrongTool.state.actFailed, false);
 

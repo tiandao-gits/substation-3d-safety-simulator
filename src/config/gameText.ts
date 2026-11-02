@@ -357,6 +357,8 @@ export const MESSAGES = {
     '已进入巡检区域。按 E 打开备忘录查看本幕任务；重要处置需附现场证据。',
   initialAssetStatus:
     '已挂载 Mixamo 角色：/assets/roles/Ch17_nonPBR.fbx | 行走：Standard Walk.fbx | 跑步：Run Forward.fbx | 跳跃：Jump.fbx',
+  saveFailed:
+    '自动保存失败：浏览器存储不可用或空间已满。关闭页面前本次进度可能丢失，请清理站点数据后重试。',
 
   toolEquipped: (_name: string, _purpose: string) =>
     '已切换随身工具。',

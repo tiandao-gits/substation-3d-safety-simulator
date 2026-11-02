@@ -25,6 +25,7 @@ import {
   type ApartmentDoorSide,
 } from './game/apartmentDoor';
 import { MESSAGES } from './config/gameText';
+import { QA_ENABLED } from './config/debugFlags';
 import type { SubstationSceneHandles } from './game/substationBuilder';
 import type { MixamoCharacterController } from './game/characterRig';
 import { soundEngine } from './game/sound';
@@ -73,7 +74,7 @@ export default function App() {
       ? new URLSearchParams(window.location.search)
       : null;
   const initialAutostart = search?.get('autostart') === '1';
-  const storyDebug = search?.get('storyDebug') === '1';
+  const storyDebug = QA_ENABLED && search?.get('storyDebug') === '1';
 
   const [gameState, setGameState] = useState<GameState>(
     initialAutostart ? 'playing' : 'title'
@@ -95,6 +96,7 @@ export default function App() {
     MESSAGES.initialAssetStatus
   );
   const [, setSafetyBannerText] = useState<string>(MESSAGES.initialBanner);
+  const [saveErrorVisible, setSaveErrorVisible] = useState(false);
 
   const canvasMountRef = useRef<HTMLDivElement | null>(null);
   const gameStateRef = useRef<GameState>(gameState);
@@ -151,6 +153,10 @@ export default function App() {
   /** QA `cutscene=1` 用的中转：applyActSpawn 定义在 bootstrap 之后。 */
   const cutsceneSpawnRef = useRef<(act: ActNo) => void>(() => {});
 
+  const handleSaveError = useCallback(() => {
+    setSaveErrorVisible(true);
+  }, []);
+
   useStoryBootstrap({
     initialAutostart,
     gameState,
@@ -162,6 +168,7 @@ export default function App() {
     // ?qa=act1&act=N&cutscene=1 → 直接从该幕开场过场进入（applyActSpawn 在下方定义，
     // 用 ref 中转避免声明顺序问题）。
     onPlayActCutscene: (act) => cutsceneSpawnRef.current(act),
+    onSaveError: handleSaveError,
   });
 
   useEffect(() => {
@@ -662,7 +669,10 @@ export default function App() {
     charControllerRef.current = sceneInstance.charController;
     envHandlesRef.current = sceneInstance.envHandles;
 
-    if (new URLSearchParams(window.location.search).has('debugCamera')) {
+    if (
+      QA_ENABLED &&
+      new URLSearchParams(window.location.search).has('debugCamera')
+    ) {
       (
         window as unknown as { __substationDebug?: unknown }
       ).__substationDebug = {
@@ -782,6 +792,24 @@ export default function App() {
           stage={sceneLoad.stage}
           error={sceneLoad.error}
         />
+      )}
+
+      {saveErrorVisible && (
+        <div
+          role="alert"
+          className="fixed bottom-6 left-1/2 z-[120] w-[min(92vw,560px)] -translate-x-1/2 rounded-lg border border-red-500/60 bg-red-950/95 px-4 py-3 text-sm text-red-100 shadow-[0_12px_40px_rgba(0,0,0,0.6)]"
+        >
+          <div className="flex items-start gap-3">
+            <p className="flex-1 leading-5">{MESSAGES.saveFailed}</p>
+            <button
+              type="button"
+              onClick={() => setSaveErrorVisible(false)}
+              className="shrink-0 cursor-pointer rounded border border-red-400/40 px-2 py-0.5 text-xs text-red-200 transition-colors hover:bg-red-900/60"
+            >
+              关闭
+            </button>
+          </div>
+        </div>
       )}
 
       {gameState === 'title' && (

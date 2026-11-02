@@ -8,23 +8,31 @@ import {
   PERMIT_ROSTER_COLUMNS,
 } from '../../config/dossier';
 import {
-  ACT1_REVIEW_CHANCES,
-  ACT1_SCORE_BASE,
-  DISPOSITION_ERROR_PENALTY,
-  PERMIT_MISMATCH_PENALTY,
-  PERMIT_UNSIGNED_PENALTY,
+  ACT_AMBIENT,
   dispositionNeedsEvidence,
   getActPoints,
   type Act1Grade,
   type Act1PointId,
   type ActNo,
 } from '../../game/act1';
-import { CREW_VIOLATION_OPTIONS } from '../../game/workPermit';
 import {
+  ACT1_REVIEW_CHANCES,
+  ACT1_SCORE_BASE,
+  CONDITION_PENALTY,
+  COVERAGE_PENALTY,
+  DISPOSITION_ERROR_PENALTY,
+  DRONE_VIOLATION_CHANCE_COST,
+  DRONE_VIOLATION_PENALTY,
   PASS_SCORE_THRESHOLD,
+  PERMIT_MISMATCH_PENALTY,
+  PERMIT_UNSIGNED_PENALTY,
   PROLOGUE_DEFER_PENALTY,
   UNHANDLED_HAZARD_PENALTY,
-} from '../../game/storySession';
+  WRONG_POINT_PENALTY,
+  WRONG_TOOL_CHANCE_COST,
+  WRONG_TOOL_PENALTY,
+} from '../../game/scoring';
+import { CREW_VIOLATION_OPTIONS } from '../../game/workPermit';
 import {
   Badge,
   DossierPane,
@@ -387,15 +395,38 @@ function PermitView({ act }: { act: ActNo }) {
   );
 }
 
+function ScoreRows({ rows }: { rows: [string, string][] }) {
+  return (
+    <dl className="mt-1.5 divide-y divide-slate-100 overflow-hidden rounded-md border border-slate-200">
+      {rows.map(([label, value]) => (
+        <div
+          key={label}
+          className="flex items-center justify-between gap-3 bg-white px-2.5 py-1.5"
+        >
+          <dt className="text-[11px] text-slate-600">{label}</dt>
+          <dd className="shrink-0 font-mono text-[11px] font-bold text-slate-800">{value}</dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
 function GameplayView() {
-  const scoring: [string, string][] = [
-    ['起评分', `${ACT1_SCORE_BASE} 分`],
-    ['处置判错', `−${DISPOSITION_ERROR_PENALTY} / 检查点`],
+  const actionScoring: [string, string][] = [
+    ['工具不适用于该检查项', `−${WRONG_TOOL_PENALTY} · 机会 −${WRONG_TOOL_CHANCE_COST}`],
+    ['无人机飞越运行间隔 / 运行主变', `−${DRONE_VIOLATION_PENALTY} · 机会 −${DRONE_VIOLATION_CHANCE_COST}`],
+    ['测点选择不适用', `−${WRONG_POINT_PENALTY}`],
+    ['覆盖不足（只记单相）', `−${COVERAGE_PENALTY}`],
+    ['测量条件不符（距离 / 角度未稳）', `−${CONDITION_PENALTY}`],
+    ['工具不在本幕装备内', '0 · 不计为操作'],
+  ];
+
+  const settleScoring: [string, string][] = [
+    ['处置判错（多处置 / 过当 / 不到位）', `−${DISPOSITION_ERROR_PENALTY} / 检查点`],
+    ['漏闭环（有隐患却记 P0 或未处置）', `−${UNHANDLED_HAZARD_PENALTY} / 项`],
     ['班前会名册错项', `−${PERMIT_MISMATCH_PENALTY} / 项`],
     ['班前会整场未签注', `−${PERMIT_UNSIGNED_PENALTY}`],
-    ['未闭环隐患', `−${UNHANDLED_HAZARD_PENALTY} / 项`],
     ['序章选择「能晚上补的先补」', `−${PROLOGUE_DEFER_PENALTY}`],
-    ['结算及格线', `${PASS_SCORE_THRESHOLD} 分`],
   ];
 
   return (
@@ -461,22 +492,32 @@ function GameplayView() {
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h4 className="text-[12.5px] font-bold text-slate-800">计分口径</h4>
           <span className="text-[10.5px] text-slate-500">
-            每幕 {ACT1_REVIEW_CHANCES} 次检查机会
+            起评 {ACT1_SCORE_BASE} 分 · 每幕 {ACT1_REVIEW_CHANCES} 次检查机会
           </span>
         </div>
-        <dl className="mt-2 divide-y divide-slate-100 overflow-hidden rounded-md border border-slate-200">
-          {scoring.map(([label, value]) => (
-            <div
-              key={label}
-              className="flex items-center justify-between gap-3 bg-white px-2.5 py-1.5"
-            >
-              <dt className="text-[11px] text-slate-600">{label}</dt>
-              <dd className="font-mono text-[11px] font-bold text-slate-800">{value}</dd>
-            </div>
-          ))}
-        </dl>
+
+        <h5 className="mt-3 text-[11px] font-bold text-slate-700">
+          动作扣分
+          <span className="ml-1.5 font-normal text-slate-500">当场结算；机会用尽只能重走本幕</span>
+        </h5>
+        <ScoreRows rows={actionScoring} />
+
+        <h5 className="mt-3 text-[11px] font-bold text-slate-700">
+          结算扣分
+          <span className="ml-1.5 font-normal text-slate-500">本幕结束或终局统一核算</span>
+        </h5>
+        <ScoreRows rows={settleScoring} />
+
         <p className="mt-2 text-[10.5px] leading-5 text-slate-500">
-          检查机会只在操作错误时消耗（工具不适用于该检查项、测点不适用等）；用尽即本幕中止。
+          <span className="font-bold text-slate-700">检查机会只在动作扣分里消耗</span>
+          ：只有「工具不适用于该检查项」与无人机违规会同时扣分与扣机会（各 −{WRONG_TOOL_CHANCE_COST} 次）；
+          每幕共 {ACT1_REVIEW_CHANCES} 次，用尽即本幕失败，只能重走本幕。测点不适用、覆盖不足、条件不符只扣分，机会不变。
+        </p>
+        <p className="mt-1 text-[10.5px] leading-5 text-slate-500">
+          <span className="font-bold text-slate-700">气温不参与扣分</span>
+          ：环温（{ACT_AMBIENT[1].temperatureC} ℃ / {ACT_AMBIENT[2].temperatureC} ℃ /{' '}
+          {ACT_AMBIENT[3].temperatureC} ℃）只作为红外相对温差 δ% = δ ÷（热点 − 环温）的分母，
+          决定读数定级为 P0–P3；定级再与标准处置分级比较，才产生上表的结算扣分。
         </p>
       </SectionCard>
 

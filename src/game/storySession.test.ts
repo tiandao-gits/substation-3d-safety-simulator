@@ -3,13 +3,18 @@ import assert from 'node:assert/strict';
 import {
   attachAct1Evidence,
   createAct1State,
-  ACT1_SCORE_BASE,
-  DISPOSITION_ERROR_PENALTY,
   getActPoints,
   setAct1Disposition,
   standardGradeFor,
   type ActNo,
 } from './act1';
+import {
+  ACT1_REVIEW_CHANCES,
+  ACT1_SCORE_BASE,
+  DISPOSITION_ERROR_PENALTY,
+  DRONE_VIOLATION_CHANCE_COST,
+  DRONE_VIOLATION_PENALTY,
+} from './scoring';
 import { buildActReview } from './endingReview';
 import { PROLOGUE } from '../config/dialogues';
 import {
@@ -18,7 +23,6 @@ import {
   createQaCompletedAct1,
   endingForRun,
   isStoryInputLocked,
-  PROLOGUE_DEFER_PENALTY,
   settlementScore,
   settlementScoreForStory,
   storyFromSave,
@@ -26,6 +30,7 @@ import {
   storyToSave,
   type StoryState,
 } from './storySession';
+import { PROLOGUE_DEFER_PENALTY } from './scoring';
 
 const SEED = 20261030;
 
@@ -236,18 +241,19 @@ test('all hazards closed but the total below 80 ends on the delay scene', () => 
 
 test('a drone violation costs a chance and fails the act when chances run out', () => {
   let s = storyReducer(createStoryState(SEED), { type: 'qa-act1', seed: SEED, act: 3 });
-  for (let i = 0; i < 4; i += 1) {
+  const DRONE_PENALTY = DRONE_VIOLATION_PENALTY;
+  for (let i = 0; i < ACT1_REVIEW_CHANCES; i += 1) {
     s = storyReducer(s, {
       type: 'act1-penalty',
       id: `drone-${i}`,
       label: '无人机飞越运行间隔',
-      points: 8,
-      chanceCost: 1,
+      points: DRONE_PENALTY,
+      chanceCost: DRONE_VIOLATION_CHANCE_COST,
       message: '违规',
     });
   }
   assert.equal(s.act1?.reviewChances, 0);
-  assert.equal(s.act1?.score, 68);
+  assert.equal(s.act1?.score, ACT1_SCORE_BASE - ACT1_REVIEW_CHANCES * DRONE_PENALTY);
   assert.equal(s.phase, 'act-failed');
 });
 
@@ -258,7 +264,7 @@ test('a failed act retries the same act without a score cap', () => {
   assert.equal(s.phase, 'act1');
   assert.equal(s.act, 2);
   assert.equal(s.act1?.actFailed, false);
-  assert.equal(s.act1?.reviewChances, 4);
+  assert.equal(s.act1?.reviewChances, ACT1_REVIEW_CHANCES);
   assert.equal(s.act1?.score, 100, '重走不设 85 分上限，失败幕的扣分不计入总分');
   assert.equal(Object.keys(s.act1?.points ?? {}).length, 3);
 });

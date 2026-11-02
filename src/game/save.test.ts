@@ -5,8 +5,13 @@ import {
   createAct1State,
   isActComplete,
 } from './act1';
-import { SAVE_KEY, loadSave } from './save';
-import { settlementScoreForStory, storyFromSave } from './storySession';
+import { SAVE_KEY, loadSave, writeSave } from './save';
+import {
+  createStoryState,
+  settlementScoreForStory,
+  storyFromSave,
+  storyToSave,
+} from './storySession';
 
 function legacyStore(payload: unknown): Storage {
   const raw = JSON.stringify(payload);
@@ -14,6 +19,31 @@ function legacyStore(payload: unknown): Storage {
     getItem: (key: string) => (key === SAVE_KEY ? raw : null),
   } as unknown as Storage;
 }
+
+test('writeSave reports failure when storage rejects every write', () => {
+  const save = storyToSave(createStoryState(7));
+  const store = {
+    setItem: () => {
+      throw new Error('quota exceeded');
+    },
+  } as unknown as Storage;
+
+  assert.equal(writeSave(save, store), false);
+});
+
+test('writeSave retries with a light save after one quota error', () => {
+  const save = storyToSave(createStoryState(7));
+  let attempts = 0;
+  const store = {
+    setItem: () => {
+      attempts += 1;
+      if (attempts === 1) throw new Error('quota exceeded');
+    },
+  } as unknown as Storage;
+
+  assert.equal(writeSave(save, store), true);
+  assert.equal(attempts, 2);
+});
 
 test('a legacy save without act/ending/unhandledHazards resumes at act 1', () => {
   const act1 = { ...createAct1State(123) } as Record<string, unknown>;

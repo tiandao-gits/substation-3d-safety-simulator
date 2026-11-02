@@ -11,6 +11,18 @@
  */
 
 import {
+  ACT1_REVIEW_CHANCES,
+  ACT1_SCORE_BASE,
+  CONDITION_PENALTY,
+  COVERAGE_PENALTY,
+  DISPOSITION_ERROR_PENALTY,
+  PERMIT_MISMATCH_PENALTY,
+  PERMIT_UNSIGNED_PENALTY,
+  WRONG_POINT_PENALTY,
+  WRONG_TOOL_CHANCE_COST,
+  WRONG_TOOL_PENALTY,
+} from './scoring';
+import {
   evaluateWorkPermitJudgment,
   generateWorkPermitRoster,
   getPermitListedMembers,
@@ -170,14 +182,6 @@ export interface Act1State {
   permitSignoff: Act1PermitSignoff | null;
 }
 
-export const ACT1_SCORE_BASE = 100;
-export const ACT1_REVIEW_CHANCES = 4;
-/** 处置错误（多处置 / 处理过当 / 处置不到位）按检查点扣分。 */
-export const DISPOSITION_ERROR_PENALTY = 8;
-/** 班前会名册每一条与现场不符的核验结论，在第二幕结算时扣分。 */
-export const PERMIT_MISMATCH_PENALTY = 4;
-/** 班前会名册整场未签注（跳过核验）在第二幕结算时扣分。 */
-export const PERMIT_UNSIGNED_PENALTY = 8;
 /** 巡视道路设计净宽（DL/T 5056、GB 50060 规范区间 0.7~1.0 m，本工程取上限）。 */
 export const ACT1_AISLE_DESIGN_WIDTH_M = 1.0;
 /** 220kV 设备不停电时的安全距离（GB 26860 表 1）。 */
@@ -1160,8 +1164,8 @@ export function applyAct1Action(
   if (!action) {
     if (isDistractor) {
       next = spendChance(
-        deduction(next, `wrong-tool-${pointId}`, '工具不适用于该检查项', 8),
-        1
+        deduction(next, `wrong-tool-${pointId}`, '工具不适用于该检查项', WRONG_TOOL_PENALTY),
+        WRONG_TOOL_CHANCE_COST
       );
       return {
         state: next,
@@ -1169,8 +1173,8 @@ export function applyAct1Action(
           kind: 'invalid',
           text: '读数无效：当前工具无法获取该检查项的数据。',
           errorType: 'wrong-tool',
-          penalty: 8,
-          chanceCost: 1,
+          penalty: WRONG_TOOL_PENALTY,
+          chanceCost: WRONG_TOOL_CHANCE_COST,
         },
       };
     }
@@ -1180,14 +1184,14 @@ export function applyAct1Action(
         result: { kind: 'invalid', text: '该工具不属于本次巡检装备。', penalty: 0, chanceCost: 0 },
       };
     }
-    next = deduction(next, `wrong-point-${pointId}-${tool}`, '测点选择不适用', 6);
+    next = deduction(next, `wrong-point-${pointId}-${tool}`, '测点选择不适用', WRONG_POINT_PENALTY);
     return {
       state: next,
       result: {
         kind: 'invalid',
         text: '该目标没有此类测点，未取得有效数据。',
         errorType: 'wrong-point',
-        penalty: 6,
+        penalty: WRONG_POINT_PENALTY,
         chanceCost: 0,
       },
     };
@@ -1196,7 +1200,7 @@ export function applyAct1Action(
   const spec = action;
   if (spec.quality === 'coverage') {
     const r = irReading(point.id, state.variant, state.act, 'single');
-    next = deduction(next, `coverage-${pointId}`, '覆盖不足：仅记录了单相', 10);
+    next = deduction(next, `coverage-${pointId}`, '覆盖不足：仅记录了单相', COVERAGE_PENALTY);
     return {
       state: {
         ...next,
@@ -1213,7 +1217,7 @@ export function applyAct1Action(
         text: `记录：${r.label} ${r.unit}`,
         reading: r,
         errorType: 'coverage',
-        penalty: 10,
+        penalty: COVERAGE_PENALTY,
         chanceCost: 0,
       },
     };
@@ -1221,7 +1225,7 @@ export function applyAct1Action(
 
   if (spec.quality === 'condition') {
     const r = irReading(point.id, state.variant, state.act, 'casual');
-    next = deduction(next, `condition-${pointId}`, '测量条件不符：距离/角度未稳定', 6);
+    next = deduction(next, `condition-${pointId}`, '测量条件不符：距离/角度未稳定', CONDITION_PENALTY);
     return {
       state: {
         ...next,
@@ -1238,7 +1242,7 @@ export function applyAct1Action(
         text: `记录：${r.label} ${r.unit}（测量条件不稳）`,
         reading: r,
         errorType: 'condition',
-        penalty: 6,
+        penalty: CONDITION_PENALTY,
         chanceCost: 0,
       },
     };

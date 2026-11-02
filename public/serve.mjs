@@ -54,7 +54,13 @@ function cacheControlFor(pathname) {
     return 'public, max-age=31536000, immutable';
   }
   if (pathname === '/' || pathname.endsWith('.html')) return 'no-cache';
-  if (/\.(?:glb|gltf|fbx|webp|png|jpe?g|gif|mp3|ogg|woff2?)$/i.test(pathname)) {
+  // 场景 GLB 的传输分片/清单没有内容哈希，不能 immutable，也不能 no-cache：
+  // 用可重验证的短缓存，过期后浏览器只发条件请求，命中 304 就不会再传 12MB。
+  if (
+    /\.(?:glb|gltf|fbx|webp|png|jpe?g|gif|mp3|ogg|woff2?)$/i.test(pathname) ||
+    /\.glb\.parts\.json$/i.test(pathname) ||
+    /\.glb\.part\d+$/i.test(pathname)
+  ) {
     return 'public, max-age=300, stale-while-revalidate=86400';
   }
   return 'no-cache';
@@ -82,16 +88,45 @@ async function isFile(path) {
   }
 }
 
+function makeEtag(info) {
+  return `W/"${info.size.toString(16)}-${Math.floor(info.mtimeMs).toString(16)}"`;
+}
+
+function isNotModified(req, etag, mtimeMs) {
+  const ifNoneMatch = req.headers['if-none-match'];
+  if (ifNoneMatch) {
+    return ifNoneMatch
+      .split(',')
+      .some((value) => value.trim() === etag || value.trim() === '*');
+  }
+  const ifModifiedSince = req.headers['if-modified-since'];
+  if (ifModifiedSince) {
+    const since = Date.parse(ifModifiedSince);
+    return Number.isFinite(since) && since >= Math.floor(mtimeMs / 1000) * 1000;
+  }
+  return false;
+}
+
 async function sendFile(filePath, req, res, pathname) {
   const info = await stat(filePath);
-  res.writeHead(200, {
+  const etag = makeEtag(info);
+  const headers = {
     'Content-Type':
       MIME_TYPES[extname(filePath).toLowerCase()] || 'application/octet-stream',
-    'Content-Length': String(info.size),
     'Cache-Control': cacheControlFor(pathname),
+    ETag: etag,
     'Last-Modified': info.mtime.toUTCString(),
     'X-Content-Type-Options': 'nosniff',
-  });
+  };
+
+  // 命中条件请求时返回 304，浏览器沿用本地副本，不再重传分片。
+  if (isNotModified(req, etag, info.mtimeMs)) {
+    res.writeHead(304, headers);
+    res.end();
+    return;
+  }
+
+  res.writeHead(200, { ...headers, 'Content-Length': String(info.size) });
 
   if (req.method === 'HEAD') {
     res.end();
