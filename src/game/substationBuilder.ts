@@ -16,6 +16,7 @@ import {
   type CrewWorkerVisualSpec,
   type WorkPermitRoster,
 } from './workPermit';
+import { computeCrewIdlePose } from './instrumentSim';
 
 /** 由 `scripts/split-glb.ts` 生成的 GLB 分片清单。 */
 interface GlbPartsManifest {
@@ -131,6 +132,7 @@ export interface SubstationSceneHandles {
   setRenderDetailMode: (mode: RenderDetailMode) => void;
   setActCharacterVisibility: (act: 1 | 2 | 3) => void;
   applyWorkPermitRoster: (roster: WorkPermitRoster) => void;
+  updateCrewIdleAnimation: (elapsedSec: number, act: 1 | 2 | 3) => void;
   setApartmentDoorOpen: (open: boolean) => void;
   setStairDoorOpen: (open01: number) => void;
   updateApartmentDoor: (dt: number) => void;
@@ -253,8 +255,11 @@ function decorateSpawnedCrewWorker(
   node: THREE.Object3D,
   spec: CrewWorkerVisualSpec,
   sceneIndex: number,
-  showOverheadTag: boolean
+  showOverheadTag: boolean,
+  contactShadowTex?: THREE.Texture
 ): void {
+  node.userData.baseRotationY = node.rotation.y;
+  node.userData.slotIndex = spec.slotIndex;
   // 1. 独立克隆衣服材质并着色（绝不修改人头与安全帽材质）
   node.traverse((sub) => {
     const mesh = sub as THREE.Mesh;
@@ -412,6 +417,23 @@ function decorateSpawnedCrewWorker(
     overheadSprite.renderOrder = 12;
     node.add(overheadSprite);
   }
+
+  // 4. 脚底柔和接触阴影贴片（彻底消除工人模型"浮在水泥地上"的感觉）
+  const contactMat = new THREE.MeshBasicMaterial({
+    map: contactShadowTex ?? null,
+    color: 0x020617,
+    transparent: true,
+    opacity: contactShadowTex ? 0.48 : 0.26,
+    depthWrite: false,
+  });
+  const contactDisc = new THREE.Mesh(
+    new THREE.PlaneGeometry(0.86, 0.86),
+    contactMat
+  );
+  contactDisc.name = `CrewContactShadow_${spec.nodeName}`;
+  contactDisc.rotation.x = -Math.PI / 2;
+  contactDisc.position.set(0, minY + 0.015, 0);
+  node.add(contactDisc);
 }
 
 export function buildSubstationEnvironment(
@@ -456,6 +478,17 @@ export function buildSubstationEnvironment(
   stairLight.name = 'STAIR_LIGHT';
   stairLight.position.set(33.0, 2.5, -19.8);
   customPropsGroup.add(stairLight);
+
+  // 室内独立布光（公寓二层房间暖白顶灯 + 一层 10kV 配电室冷白顶灯），替代粗暴降低全局曝光
+  const apartmentRoomLight = new THREE.PointLight(0xfff1d6, 1.85, 11, 1.8);
+  apartmentRoomLight.name = 'APARTMENT_ROOM_LIGHT';
+  apartmentRoomLight.position.set(35.2, 5.7, -23.2);
+  customPropsGroup.add(apartmentRoomLight);
+
+  const hv10kvRoomLight = new THREE.PointLight(0xe0f2fe, 2.1, 14, 1.8);
+  hv10kvRoomLight.name = 'HV10KV_ROOM_LIGHT';
+  hv10kvRoomLight.position.set(35.2, 3.1, -22.4);
+  customPropsGroup.add(hv10kvRoomLight);
 
   const clayMaterial = new THREE.MeshStandardMaterial({
     color: 0xc7cdd2,
@@ -535,7 +568,8 @@ export function buildSubstationEnvironment(
         detailedWorker,
         spec,
         idx,
-        currentAct === 2
+        currentAct === 2,
+        textures.contactShadow
       );
       dynamicCrewDetailedGroup.add(detailedWorker);
 
@@ -648,6 +682,39 @@ export function buildSubstationEnvironment(
           const tint = standard?.name ? materialTints[standard.name] : undefined;
           if (tint !== undefined && !standard.map) {
             standard.color.setHex(tint);
+            standard.needsUpdate = true;
+          }
+          // 瓷瓶与绝缘子釉面清漆质感升级（降低 roughness、提高环境反射与高光清漆感）
+          if (
+            standard?.name === 'MAT_PORCELAIN_BROWN' ||
+            standard?.name === 'MAT_INSULATOR.001'
+          ) {
+            const physical = new THREE.MeshPhysicalMaterial({
+              name: standard.name,
+              color: standard.color.clone(),
+              map: standard.map,
+              normalMap: standard.normalMap,
+              roughness: 0.22,
+              metalness: 0.08,
+              clearcoat: 0.88,
+              clearcoatRoughness: 0.14,
+              envMapIntensity: 1.35,
+            });
+            if (Array.isArray(mesh.material)) {
+              const idx = mesh.material.indexOf(standard);
+              if (idx >= 0) mesh.material[idx] = physical;
+            } else {
+              mesh.material = physical;
+            }
+          }
+          // 主变本体与构架钢材金属反射强化
+          if (
+            standard?.name === 'MAT_STEEL.001' ||
+            standard?.name === 'MAT_DARK_STEEL.001'
+          ) {
+            standard.roughness = 0.36;
+            standard.metalness = 0.78;
+            standard.envMapIntensity = 1.25;
             standard.needsUpdate = true;
           }
           if (standard?.name === 'CLOTH_ORANGE') {
@@ -775,6 +842,28 @@ export function buildSubstationEnvironment(
       currentCrewRoster = roster;
       setActiveWorkPermitRoster(roster);
       syncCrewVisualsWithRoster();
+    },
+    updateCrewIdleAnimation(elapsedSec: number, act: 1 | 2 | 3) {
+      if (!dynamicCrewDetailedGroup.visible) return;
+      for (const worker of dynamicCrewDetailedGroup.children) {
+        const slotIndex =
+          typeof worker.userData.slotIndex === 'number'
+            ? worker.userData.slotIndex
+            : 1;
+        const baseYaw =
+          typeof worker.userData.baseRotationY === 'number'
+            ? worker.userData.baseRotationY
+            : worker.rotation.y;
+        const pose = computeCrewIdlePose(elapsedSec, slotIndex, act);
+        worker.scale.set(
+          pose.breathScaleXZ,
+          pose.breathScaleY,
+          pose.breathScaleXZ
+        );
+        worker.rotation.y = baseYaw + pose.yawOffset;
+        worker.rotation.z = pose.swayRollZ;
+        worker.rotation.x = pose.pitchX;
+      }
     },
     setApartmentDoorOpen(open: boolean) {
       apartmentDoorOpenRequested = open;

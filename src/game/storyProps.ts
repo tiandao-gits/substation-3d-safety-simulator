@@ -22,14 +22,17 @@ export interface Act1StoryProps {
     variant: Act1Variant | null,
     visible: boolean,
     elapsed: number,
-    act: ActNo
+    act: ActNo,
+    audioAnomalyIntensity?: number
   ) => void;
   dispose: () => void;
 }
 
 const MARKER_COLOR = new THREE.Color(0x38bdf8);
 
-export function createAct1StoryProps(): Act1StoryProps {
+export function createAct1StoryProps(
+  contactShadowTex?: THREE.Texture
+): Act1StoryProps {
   const group = new THREE.Group();
   group.name = 'ACT1_STORY_PROPS';
   group.visible = false;
@@ -80,7 +83,7 @@ export function createAct1StoryProps(): Act1StoryProps {
   // 只出现在"有故障"点位上的视觉提示标出，否则玩家无需检测即可看答案。
   // 过热只能由红外测温读数与判据屏揭示，场景内不放置任何差异化标记。
 
-  // 2. Act 1 — 巡视通道净宽 0.78m 红色激光测距标尺线
+  // 2. Act 1 — 巡视通道净宽 0.78m 红色激光测距标尺线 + 占道木料堆底部接触阴影
   const aisle = getAct1Point('aisle');
   const aisleY = siteGroundHeight(aisle.x, aisle.z);
   const laserMat = new THREE.MeshBasicMaterial({
@@ -96,6 +99,22 @@ export function createAct1StoryProps(): Act1StoryProps {
   aisleLaser.position.set(aisle.x, aisleY + 0.16, aisle.z);
   aisleLaser.name = 'prop-aisle-laser';
   group.add(aisleLaser);
+
+  const contactShadowMat = new THREE.MeshBasicMaterial({
+    map: contactShadowTex ?? null,
+    color: 0x020617,
+    transparent: true,
+    opacity: contactShadowTex ? 0.52 : 0.28,
+    depthWrite: false,
+  });
+  const aisleContactShadow = new THREE.Mesh(
+    new THREE.PlaneGeometry(1.65, 1.25),
+    contactShadowMat
+  );
+  aisleContactShadow.rotation.x = -Math.PI / 2;
+  aisleContactShadow.position.set(aisle.x, aisleY + 0.014, aisle.z);
+  aisleContactShadow.name = 'prop-aisle-contact-shadow';
+  group.add(aisleContactShadow);
 
   // 3. Act 1 — F02 间隔 B 相引线接头（variant B 过热）。
   // 同上：现场不做任何差异化提示，靠测温读数判定。
@@ -173,7 +192,7 @@ export function createAct1StoryProps(): Act1StoryProps {
   pitWater.name = 'prop-pit-water';
   group.add(pitLaser, pitWater);
 
-  // 7. Act 3 — 临时配电箱接地/漏保异常警示光圈
+  // 7. Act 3 — 临时配电箱接地/漏保异常警示光圈 + 底部接触阴影 + 动态声光联动电弧闪烁
   const box = getAct1Point('a3-box');
   const boxY = siteGroundHeight(box.x, box.z);
   const boxFault = new THREE.Mesh(
@@ -190,13 +209,62 @@ export function createAct1StoryProps(): Act1StoryProps {
   boxFault.name = 'prop-box-fault';
   group.add(boxFault);
 
+  const boxContactShadow = new THREE.Mesh(
+    new THREE.PlaneGeometry(1.15, 1.15),
+    contactShadowMat
+  );
+  boxContactShadow.rotation.x = -Math.PI / 2;
+  boxContactShadow.position.set(box.x, boxY + 0.014, box.z);
+  boxContactShadow.name = 'prop-box-contact-shadow';
+  group.add(boxContactShadow);
+
+  // 配电箱端子间歇性电火花点光源与电弧细丝（与 3D 空间音效包络同步闪烁）
+  const boxArcLight = new THREE.PointLight(0x7dd3fc, 0, 5.8, 2);
+  boxArcLight.position.set(box.x, boxY + 0.92, box.z + 0.18);
+  boxArcLight.name = 'prop-box-arc-light';
+  group.add(boxArcLight);
+
+  const sparkMat = new THREE.MeshBasicMaterial({
+    color: 0xe0f2fe,
+    transparent: true,
+    opacity: 0.95,
+  });
+  const sparkFilaments: THREE.Mesh[] = [];
+  for (let i = 0; i < 3; i++) {
+    const filament = new THREE.Mesh(
+      new THREE.OctahedronGeometry(0.032, 0),
+      sparkMat
+    );
+    filament.position.set(
+      box.x + (i - 1) * 0.05,
+      boxY + 0.88 + i * 0.03,
+      box.z + 0.16
+    );
+    filament.name = `prop-box-spark-${i}`;
+    filament.visible = false;
+    group.add(filament);
+    sparkFilaments.push(filament);
+  }
+
   return {
     group,
-    update(activeId, done, variant, visible, elapsed, act) {
+    update(
+      activeId,
+      done,
+      variant,
+      visible,
+      elapsed,
+      act,
+      audioAnomalyIntensity = 0.5
+    ) {
       group.visible = visible;
-      if (!visible) return;
+      if (!visible) {
+        boxArcLight.intensity = 0;
+        return;
+      }
 
       aisleLaser.visible = act === 1 && !done.has('aisle');
+      aisleContactShadow.visible = act === 1;
 
       const showWallDefect = act === 2 && variant === 'B';
       wallDamp.visible = showWallDefect;
@@ -208,7 +276,34 @@ export function createAct1StoryProps(): Act1StoryProps {
       pitLaser.visible = showPitClues;
       pitWater.visible = showPitClues;
 
-      boxFault.visible = act === 3 && !done.has('a3-box');
+      const showBoxFault = act === 3 && !done.has('a3-box');
+      boxFault.visible = showBoxFault;
+      boxContactShadow.visible = act === 3;
+
+      if (showBoxFault) {
+        // 间歇性电弧放电闪烁包络，与 3D 空间音效强度联动
+        const burstWave =
+          Math.sin(elapsed * 31.0) *
+          Math.cos(elapsed * 17.3) *
+          Math.sin(elapsed * 7.4);
+        const isSparking = burstWave > 0.24;
+        const audioGain = 0.55 + Math.max(0.15, audioAnomalyIntensity) * 1.15;
+        boxArcLight.intensity = isSparking
+          ? (1.4 + (burstWave - 0.24) * 3.2) * audioGain
+          : 0.12 * audioGain;
+        for (let i = 0; i < sparkFilaments.length; i++) {
+          const f = sparkFilaments[i];
+          f.visible = isSparking && (i === 0 || burstWave > 0.42);
+          if (f.visible) {
+            const s = 0.7 + ((elapsed * 40 + i * 1.3) % 0.9);
+            f.scale.set(s, s * 1.6, s);
+            f.rotation.z = elapsed * 18 + i * 2.1;
+          }
+        }
+      } else {
+        boxArcLight.intensity = 0;
+        for (const f of sparkFilaments) f.visible = false;
+      }
 
       for (const [id, marker] of markers) {
         const isDone = done.has(id);

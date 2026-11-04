@@ -57,6 +57,7 @@ import {
   getActiveWorkPermitRoster,
   getFocusedCrewSlot,
 } from './workPermit';
+import { computeSnappedShadowRig } from './instrumentSim';
 
 /** 越线触电后全屏晃动的时长，结束后切入失败黑屏。 */
 const ELECTROCUTION_SECONDS = 3;
@@ -146,6 +147,7 @@ export function startSimulationRuntime({
     renderer,
     scene,
     camera,
+    sunLight,
     isSoftwareGl,
     charController,
     envHandles,
@@ -741,6 +743,7 @@ export function startSimulationRuntime({
       const storyAct1Active = storyRef.current.phase === 'act1';
       const currentActNo = act1State?.act ?? storyRef.current.act;
       envHandles.setActCharacterVisibility(currentActNo);
+      envHandles.updateCrewIdleAnimation(elapsedRef.current, currentActNo);
 
       // 实时更新 3D 空间音效（220kV 电晕放电声、10kV 局部放电声、施工区配电箱/主变异响）
       const spatialAudio = soundEngine.updateSpatialAudio({
@@ -812,12 +815,14 @@ export function startSimulationRuntime({
         act1State?.variant ?? null,
         storyAct1Active,
         elapsedRef.current,
-        currentActNo
+        currentActNo,
+        spatialAudio.equipmentAnomaly.intensity
       );
       safetyLines.update(currentActNo, storyAct1Active);
 
       const insideApartment = isInsideApartmentRoom(p.x, p.z);
-      renderer.toneMappingExposure = insideApartment ? 0.62 : 0.86;
+      // 保持全局曝光恒定 0.86，室内照明由公寓与配电室顶部独立 PointLight 提供，消除进出门天空闪暗
+      renderer.toneMappingExposure = 0.86;
       const focusPointId = activeWorkbenchPointIdRef?.current ?? null;
       charController.root.visible = focusPointId === null;
       if (focusPointId && p.perspective !== 'drone') {
@@ -927,6 +932,27 @@ export function startSimulationRuntime({
         }
         camera.position.copy(smoothCamPos);
         camera.lookAt(smoothLookAt);
+      }
+
+      // 动态跟随玩家/镜头焦点的紧致阴影相机（±22m，按纹素网格对齐防闪烁）
+      if (sunLight.castShadow) {
+        const snappedShadow = computeSnappedShadowRig(
+          smoothLookAt.x,
+          smoothLookAt.z,
+          22,
+          2048
+        );
+        sunLight.target.position.set(
+          snappedShadow.targetX,
+          0,
+          snappedShadow.targetZ
+        );
+        sunLight.target.updateMatrixWorld();
+        sunLight.position.set(
+          snappedShadow.lightX,
+          snappedShadow.lightY,
+          snappedShadow.lightZ
+        );
       }
       if (shocked && shockStartedAt !== null) {
         const elapsed = (now - shockStartedAt) / 1000;
