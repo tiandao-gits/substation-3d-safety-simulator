@@ -57,6 +57,7 @@ import {
   getActiveWorkPermitRoster,
   getFocusedCrewSlot,
 } from './workPermit';
+import { computeRendererThrottlePolicy } from './instrumentSim';
 
 /** 越线触电后全屏晃动的时长，结束后切入失败黑屏。 */
 const ELECTROCUTION_SECONDS = 3;
@@ -87,6 +88,8 @@ export interface StartSimulationRuntimeOptions {
   apartmentDoorCloseAtRef: MutableRefObject<number | null>;
   cameraSnapRequestedRef: MutableRefObject<boolean>;
   cutsceneRef: MutableRefObject<CutsceneState | null>;
+  windowFocusedRef?: MutableRefObject<boolean>;
+  documentHiddenRef?: MutableRefObject<boolean>;
   /** 过场播完（或跳过）时通知 UI 收起黑边。 */
   onCutsceneEnd?: () => void;
   dispatchStory: Dispatch<StoryAction>;
@@ -126,6 +129,8 @@ export function startSimulationRuntime({
   apartmentDoorCloseAtRef,
   cameraSnapRequestedRef,
   cutsceneRef,
+  windowFocusedRef,
+  documentHiddenRef,
   onCutsceneEnd,
   dispatchStory,
   setActiveModal,
@@ -170,12 +175,19 @@ export function startSimulationRuntime({
 
   let frameId = 0;
   let lastTimestamp = performance.now();
+  let lastRenderTimestamp = 0;
+  let avgFrameMs = 16.6;
+  let appliedPixelRatio = renderer.getPixelRatio();
   let hudSyncTimer = 0;
   let stepDistanceAccumulator = 0;
   let droneViolationAt = 0;
   let shockStartedAt: number | null = null;
   let shockZoneLabel: string | null = null;
   let shockReported = false;
+  let localWindowFocused =
+    typeof document !== 'undefined' ? document.hasFocus() : true;
+  let localDocumentHidden =
+    typeof document !== 'undefined' ? document.hidden : false;
   /** 过场镜号：变化时硬切（不做插值），避免机位穿过墙体。 */
   let cutsceneShotIndex = -1;
   /** 游戏默认机位 FOV 由 sceneSetup 设定，过场结束后恢复。 */
@@ -320,8 +332,22 @@ export function startSimulationRuntime({
     keysPressed.delete(e.code);
   };
 
+  const onWindowFocus = () => {
+    localWindowFocused = true;
+    if (windowFocusedRef) windowFocusedRef.current = true;
+  };
+
   const onWindowBlur = () => {
+    localWindowFocused = false;
+    if (windowFocusedRef) windowFocusedRef.current = false;
     keysPressed.clear();
+  };
+
+  const onVisibilityChange = () => {
+    const hidden = typeof document !== 'undefined' ? document.hidden : false;
+    localDocumentHidden = hidden;
+    if (documentHiddenRef) documentHiddenRef.current = hidden;
+    if (hidden) keysPressed.clear();
   };
 
   const onMouseMove = (e: MouseEvent) => {
@@ -381,7 +407,9 @@ export function startSimulationRuntime({
 
   window.addEventListener('keydown', onKeyDown);
   window.addEventListener('keyup', onKeyUp);
+  window.addEventListener('focus', onWindowFocus);
   window.addEventListener('blur', onWindowBlur);
+  document.addEventListener('visibilitychange', onVisibilityChange);
   window.addEventListener('mousemove', onMouseMove);
   renderer.domElement.addEventListener('pointerdown', handleCanvasPointerDown);
   renderer.domElement.addEventListener('wheel', onWheel, { passive: true });
@@ -410,12 +438,64 @@ export function startSimulationRuntime({
 
   function tick() {
     const now = performance.now();
-    const rawDt = (now - lastTimestamp) / 1000;
-    lastTimestamp = now;
-    const dt = Math.min(Math.max(rawDt, 0.001), 0.05);
-
     const state = gameStateRef.current;
     const p = playerRef.current;
+
+    const throttle = computeRendererThrottlePolicy({
+      documentHidden: documentHiddenRef?.current ?? localDocumentHidden,
+      windowFocused: windowFocusedRef?.current ?? localWindowFocused,
+      pointerLocked: document.pointerLockElement === renderer.domElement,
+      gameState: state,
+      modalOpen: modalOpenRef.current,
+      storyOverlayOpen: storyOverlayOpenRef.current,
+      workbenchOpen: (activeWorkbenchPointIdRef?.current ?? null) !== null,
+      cutsceneActive: cutsceneRef.current !== null,
+      isMoving:
+        isMovementKeyHeld() || Math.hypot(p.vx, p.vz) > 0.08 || !p.isGrounded,
+      isSoftwareGl,
+      devicePixelRatio: window.devicePixelRatio || 1,
+      avgFrameMs,
+    });
+
+    // 页面隐藏时直接暂停 3D 渲染循环，避免后台白跑 GPU
+    if (!throttle.shouldRender) {
+      lastTimestamp = now;
+      frameId = window.setTimeout(tick, throttle.minFrameIntervalMs);
+      return;
+    }
+
+    // FPS 节流：非焦点、标题页、弹窗、工作台等状态下按目标帧间隔跳过冗余帧
+    const elapsedSinceRender = now - lastRenderTimestamp;
+    if (
+      lastRenderTimestamp > 0 &&
+      elapsedSinceRender < throttle.minFrameIntervalMs - 1.5
+    ) {
+      if (isSoftwareGl) {
+        frameId = window.setTimeout(
+          tick,
+          Math.max(8, throttle.minFrameIntervalMs - elapsedSinceRender)
+        );
+      } else {
+        frameId = requestAnimationFrame(tick);
+      }
+      return;
+    }
+
+    // 动态调整渲染分辨率（pixelRatio 变化超过 0.05 时才同步，避免每帧重置画布缓冲区）
+    if (Math.abs(appliedPixelRatio - throttle.pixelRatio) >= 0.05) {
+      appliedPixelRatio = throttle.pixelRatio;
+      renderer.setPixelRatio(appliedPixelRatio);
+      renderer.setSize(
+        container.clientWidth || window.innerWidth,
+        Math.max(1, container.clientHeight || window.innerHeight),
+        false
+      );
+    }
+
+    const rawDt = (now - lastTimestamp) / 1000;
+    lastTimestamp = now;
+    lastRenderTimestamp = now;
+    const dt = Math.min(Math.max(rawDt, 0.001), 0.05);
 
     if (state === 'title') {
       const t = now * 0.00035;
@@ -1018,7 +1098,10 @@ export function startSimulationRuntime({
 
     envHandles.updateApartmentDoor(dt);
     if (readiness.renderEnabled) {
+      const renderStart = performance.now();
       renderer.render(scene, camera);
+      const renderCost = performance.now() - renderStart;
+      avgFrameMs = avgFrameMs * 0.9 + Math.max(renderCost, rawDt * 1000) * 0.1;
     }
 
     if (isSoftwareGl) {
@@ -1035,7 +1118,9 @@ export function startSimulationRuntime({
     clearTimeout(frameId);
     window.removeEventListener('keydown', onKeyDown);
     window.removeEventListener('keyup', onKeyUp);
+    window.removeEventListener('focus', onWindowFocus);
     window.removeEventListener('blur', onWindowBlur);
+    document.removeEventListener('visibilitychange', onVisibilityChange);
     window.removeEventListener('mousemove', onMouseMove);
     renderer.domElement.removeEventListener(
       'pointerdown',

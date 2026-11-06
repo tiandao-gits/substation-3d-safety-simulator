@@ -411,3 +411,138 @@ export function computeCrewIdlePose(
     yawOffset,
   };
 }
+
+export interface RendererThrottleInput {
+  documentHidden: boolean;
+  windowFocused: boolean;
+  pointerLocked: boolean;
+  gameState: 'title' | 'playing' | 'paused';
+  modalOpen: boolean;
+  storyOverlayOpen: boolean;
+  workbenchOpen: boolean;
+  cutsceneActive: boolean;
+  isMoving: boolean;
+  isSoftwareGl: boolean;
+  devicePixelRatio: number;
+  /** 最近帧耗时指数移动平均（ms），用于在高负载时自动降采样分辨率 */
+  avgFrameMs?: number;
+}
+
+export interface RendererThrottlePolicy {
+  shouldRender: boolean;
+  targetFps: number;
+  minFrameIntervalMs: number;
+  pixelRatio: number;
+  tier:
+    | 'paused'
+    | 'background'
+    | 'ui-overlay'
+    | 'workbench'
+    | 'idle-play'
+    | 'active-play';
+}
+
+/**
+ * 计算渲染器性能节流策略：
+ * - 页面隐藏时暂停绘制；
+ * - 窗口失焦时降至 15 FPS + 0.65x 分辨率；
+ * - 标题页、弹窗、全屏剧情遮罩开启时降至 24 FPS + 0.75x 分辨率；
+ * - 巡检工作台开启或未锁定鼠标静止时降至 30 FPS + 1.0x 分辨率；
+ * - 正常游玩时限制上限 60 FPS，并根据帧耗时动态自适应缩放 pixelRatio（最高 1.5x），避免高分屏填充率过载。
+ */
+export function computeRendererThrottlePolicy(
+  input: RendererThrottleInput
+): RendererThrottlePolicy {
+  const rawDpr = Math.max(1, input.devicePixelRatio || 1);
+  const maxActiveDpr = input.isSoftwareGl ? 1 : Math.min(rawDpr, 1.5);
+
+  if (input.documentHidden) {
+    return {
+      shouldRender: false,
+      targetFps: 0,
+      minFrameIntervalMs: 250,
+      pixelRatio: 0.5,
+      tier: 'paused',
+    };
+  }
+
+  if (!input.windowFocused) {
+    const ratio = input.isSoftwareGl
+      ? 0.6
+      : Math.max(0.65, Math.min(0.85, Math.round(maxActiveDpr * 0.6 * 20) / 20));
+    return {
+      shouldRender: true,
+      targetFps: 15,
+      minFrameIntervalMs: 1000 / 15,
+      pixelRatio: ratio,
+      tier: 'background',
+    };
+  }
+
+  if (
+    input.gameState !== 'playing' ||
+    input.modalOpen ||
+    (input.storyOverlayOpen && !input.workbenchOpen)
+  ) {
+    const ratio = input.isSoftwareGl
+      ? 0.75
+      : Math.max(0.75, Math.min(1.0, Math.round(maxActiveDpr * 0.75 * 20) / 20));
+    return {
+      shouldRender: true,
+      targetFps: 24,
+      minFrameIntervalMs: 1000 / 24,
+      pixelRatio: ratio,
+      tier: 'ui-overlay',
+    };
+  }
+
+  if (input.workbenchOpen) {
+    const ratio = input.isSoftwareGl
+      ? 0.85
+      : Math.max(0.85, Math.min(1.1, Math.round(maxActiveDpr * 0.85 * 20) / 20));
+    return {
+      shouldRender: true,
+      targetFps: 30,
+      minFrameIntervalMs: 1000 / 30,
+      pixelRatio: ratio,
+      tier: 'workbench',
+    };
+  }
+
+  if (!input.pointerLocked && !input.cutsceneActive && !input.isMoving) {
+    const ratio = input.isSoftwareGl
+      ? 0.85
+      : Math.max(0.85, Math.min(1.1, Math.round(maxActiveDpr * 0.85 * 20) / 20));
+    return {
+      shouldRender: true,
+      targetFps: 30,
+      minFrameIntervalMs: 1000 / 30,
+      pixelRatio: ratio,
+      tier: 'idle-play',
+    };
+  }
+
+  // 正常高交互游玩或过场镜头：上限 60 FPS，并根据帧耗时动态自适应降采样
+  const avgMs = input.avgFrameMs ?? 16.6;
+  let adaptiveScale = 1.0;
+  if (avgMs > 28) {
+    adaptiveScale = 0.75;
+  } else if (avgMs > 21) {
+    adaptiveScale = 0.85;
+  }
+  const activeRatio = input.isSoftwareGl
+    ? Math.max(0.75, Math.round(adaptiveScale * 20) / 20)
+    : Math.max(
+        0.75,
+        Math.min(1.5, Math.round(maxActiveDpr * adaptiveScale * 20) / 20)
+      );
+
+  return {
+    shouldRender: true,
+    targetFps: 60,
+    minFrameIntervalMs: 1000 / 60,
+    pixelRatio: activeRatio,
+    tier: 'active-play',
+  };
+}
+

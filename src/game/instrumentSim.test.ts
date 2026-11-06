@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   computeCrewIdlePose,
   computeMeterSweepFrame,
+  computeRendererThrottlePolicy,
   computeSnappedShadowRig,
   getMeterSweepConfig,
   getPhaseThermalTargets,
@@ -87,3 +88,57 @@ test('computeCrewIdlePose produces subtle breathing and act-aware motion', () =>
   const act3Pose = computeCrewIdlePose(1.2, 2, 3);
   assert.ok(act3Pose.pitchX >= 0);
 });
+
+test('computeRendererThrottlePolicy throttles FPS and resolution when unfocused or in UI overlays', () => {
+  const active = computeRendererThrottlePolicy({
+    documentHidden: false,
+    windowFocused: true,
+    pointerLocked: true,
+    gameState: 'playing',
+    modalOpen: false,
+    storyOverlayOpen: false,
+    workbenchOpen: false,
+    cutsceneActive: false,
+    isMoving: true,
+    isSoftwareGl: false,
+    devicePixelRatio: 2,
+    avgFrameMs: 16,
+  });
+  assert.equal(active.tier, 'active-play');
+  assert.equal(active.targetFps, 60);
+  assert.equal(active.pixelRatio, 1.5);
+
+  const unfocused = computeRendererThrottlePolicy({
+    documentHidden: false,
+    windowFocused: false,
+    pointerLocked: false,
+    gameState: 'playing',
+    modalOpen: false,
+    storyOverlayOpen: false,
+    workbenchOpen: false,
+    cutsceneActive: false,
+    isMoving: false,
+    isSoftwareGl: false,
+    devicePixelRatio: 2,
+  });
+  assert.equal(unfocused.tier, 'background');
+  assert.equal(unfocused.targetFps, 15);
+  assert.ok(unfocused.pixelRatio < active.pixelRatio);
+
+  const hidden = computeRendererThrottlePolicy({
+    documentHidden: true,
+    windowFocused: false,
+    pointerLocked: false,
+    gameState: 'playing',
+    modalOpen: false,
+    storyOverlayOpen: false,
+    workbenchOpen: false,
+    cutsceneActive: false,
+    isMoving: false,
+    isSoftwareGl: false,
+    devicePixelRatio: 2,
+  });
+  assert.equal(hidden.shouldRender, false);
+  assert.equal(hidden.targetFps, 0);
+});
+

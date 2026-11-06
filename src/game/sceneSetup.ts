@@ -94,7 +94,7 @@ export function createSubstationScene({
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   renderer.toneMappingExposure = 0.86;
   renderer.setPixelRatio(
-    isSoftwareGl ? 1 : Math.min(window.devicePixelRatio || 1, 2)
+    isSoftwareGl ? 1 : Math.min(window.devicePixelRatio || 1, 1.5)
   );
   renderer.setSize(
     container.clientWidth || window.innerWidth,

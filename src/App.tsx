@@ -60,6 +60,7 @@ import {
   generateWorkPermitRoster,
   type WorkPermitRoster,
 } from './game/workPermit';
+import { computeRendererThrottlePolicy } from './game/instrumentSim';
 import { useGamePointerLock } from './hooks/useGamePointerLock';
 import { useStoryBootstrap } from './hooks/useStoryBootstrap';
 import { HudOverlay } from './ui/hud/HudOverlay';
@@ -131,6 +132,13 @@ export default function App() {
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
   const sceneRef = useRef<THREE.Scene | null>(null);
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
+  const isSoftwareGlRef = useRef(false);
+  const windowFocusedRef = useRef(
+    typeof document !== 'undefined' ? document.hasFocus() : true
+  );
+  const documentHiddenRef = useRef(
+    typeof document !== 'undefined' ? document.hidden : false
+  );
   const [electrocuted, setElectrocuted] = useState(false);
   const cutsceneRef = useRef<CutsceneState | null>(null);
   const [cutscene, setCutscene] = useState<{
@@ -187,6 +195,64 @@ export default function App() {
   useEffect(() => {
     modalOpenRef.current = activeModal !== null;
   }, [activeModal]);
+
+  /**
+   * 渲染器性能限制：当窗口失焦、切入后台、处于标题页或打开弹窗/剧情遮罩/巡检工作台时，
+   * 立即下调渲染器 pixelRatio 分辨率，并与渲染循环的 FPS 节流配合以降低 GPU 负载、消除卡顿。
+   */
+  const syncRendererThrottle = useCallback(() => {
+    const renderer = rendererRef.current;
+    const container = canvasMountRef.current;
+    if (!renderer || !container) return;
+    const policy = computeRendererThrottlePolicy({
+      documentHidden: documentHiddenRef.current,
+      windowFocused: windowFocusedRef.current,
+      pointerLocked: document.pointerLockElement === renderer.domElement,
+      gameState: gameStateRef.current,
+      modalOpen: modalOpenRef.current,
+      storyOverlayOpen: storyOverlayOpenRef.current,
+      workbenchOpen: activeWorkbenchPointIdRef.current !== null,
+      cutsceneActive: cutsceneRef.current !== null,
+      isMoving: false,
+      isSoftwareGl: isSoftwareGlRef.current,
+      devicePixelRatio: window.devicePixelRatio || 1,
+    });
+    if (Math.abs(renderer.getPixelRatio() - policy.pixelRatio) >= 0.05) {
+      renderer.setPixelRatio(policy.pixelRatio);
+      renderer.setSize(
+        container.clientWidth || window.innerWidth,
+        Math.max(1, container.clientHeight || window.innerHeight),
+        false
+      );
+    }
+  }, []);
+
+  useEffect(() => {
+    const onFocus = () => {
+      windowFocusedRef.current = true;
+      syncRendererThrottle();
+    };
+    const onBlur = () => {
+      windowFocusedRef.current = false;
+      syncRendererThrottle();
+    };
+    const onVisibility = () => {
+      documentHiddenRef.current = document.hidden;
+      syncRendererThrottle();
+    };
+    window.addEventListener('focus', onFocus);
+    window.addEventListener('blur', onBlur);
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      window.removeEventListener('focus', onFocus);
+      window.removeEventListener('blur', onBlur);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
+  }, [syncRendererThrottle]);
+
+  useEffect(() => {
+    syncRendererThrottle();
+  }, [gameState, activeModal, storyOverlayOpen, cutscene, syncRendererThrottle]);
 
   const updateBannerMessage = useCallback((msg: string) => {
     setSafetyBannerText(msg);
@@ -666,6 +732,7 @@ export default function App() {
     rendererRef.current = sceneInstance.renderer;
     sceneRef.current = sceneInstance.scene;
     cameraRef.current = sceneInstance.camera;
+    isSoftwareGlRef.current = sceneInstance.isSoftwareGl;
     charControllerRef.current = sceneInstance.charController;
     envHandlesRef.current = sceneInstance.envHandles;
 
@@ -701,6 +768,8 @@ export default function App() {
       apartmentDoorCloseAtRef,
       cameraSnapRequestedRef,
       cutsceneRef,
+      windowFocusedRef,
+      documentHiddenRef,
       onCutsceneEnd: handleCutsceneEnd,
       dispatchStory,
       setActiveModal,
