@@ -46,14 +46,6 @@ import {
   crewMenuKey,
   useCrewFocus,
 } from './WorkPermitPanel';
-import {
-  AnimatedMeterPanel,
-  ThermalImagerViewfinder,
-} from './InstrumentOverlay';
-import {
-  getMeterSweepConfig,
-  type MeterSweepConfig,
-} from '../game/instrumentSim';
 
 /** 红外读数方式的能力边界：只有同距同角三相读数能作为判级依据。 */
 const MEASURE_MODE_HINT: Record<string, string> = {
@@ -134,16 +126,8 @@ export function ToolWorkbench({
     toolId: Act1Tool;
     specs: Act1ActionSpec[];
   } | null>(null);
-  const [activeThermalMode, setActiveThermalMode] = useState<
-    'ir-3' | 'ir-1' | 'ir-casual' | 'oil-temp' | null
-  >(null);
-  const [activeMeterConfig, setActiveMeterConfig] =
-    useState<MeterSweepConfig | null>(null);
-  const [meterTriggerKey, setMeterTriggerKey] = useState(0);
 
   const isCrewPoint = point.id === 'a2-crew';
-  const hasThermalSupport =
-    point.id === 'bay-temp' || point.id === 'hv-10kv' || point.id === 'a2-oil';
   /** 班前会名册与 3D 现场人员同源：左栏人员列表与右栏名册共用同一份 roster。 */
   const permitRoster = useMemo(
     () => generateWorkPermitRoster(seed, variant, 0),
@@ -152,11 +136,6 @@ export function ToolWorkbench({
   /** 左上菜单的选中项：班前会是人员槽位，其余巡检点是检测项。 */
   const [selectedActionId, setSelectedActionId] = useState<string | null>(null);
   const { focusedSlot, select: selectCrewSlot } = useCrewFocus();
-
-  useEffect(() => {
-    setActiveThermalMode(null);
-    setActiveMeterConfig(null);
-  }, [point.id]);
 
   useEffect(() => {
     if (!isCrewPoint) return;
@@ -298,27 +277,6 @@ export function ToolWorkbench({
     ? crewMenuKey(focusedSlot)
     : selectedActionKey;
 
-  const activateInstrumentAction = (toolId: Act1Tool, actionId: string) => {
-    if (
-      toolId === 'thermometer' &&
-      (actionId === 'ir-3' ||
-        actionId === 'ir-1' ||
-        actionId === 'ir-casual' ||
-        actionId === 'oil-temp')
-    ) {
-      setActiveThermalMode(actionId);
-      setActiveMeterConfig(null);
-      return;
-    }
-    const meterCfg = getMeterSweepConfig(point.id, actionId, variant);
-    if (meterCfg) {
-      setActiveMeterConfig(meterCfg);
-      setMeterTriggerKey((k) => k + 1);
-      setActiveThermalMode(null);
-    }
-    onToolAction(toolId, actionId);
-  };
-
   const handleDrawerSelect = (toolId: Act1Tool) => {
     if (!drawerAction) return;
     const action = drawerAction;
@@ -334,7 +292,7 @@ export function ToolWorkbench({
       return;
     }
     setDrawerAction(null);
-    activateInstrumentAction(toolId, action.id);
+    onToolAction(toolId, action.id);
   };
 
   const handleModeSelect = (spec: Act1ActionSpec) => {
@@ -342,7 +300,7 @@ export function ToolWorkbench({
     const toolId = modeChoices.toolId;
     setModeChoices(null);
     setDrawerAction(null);
-    activateInstrumentAction(toolId, spec.id);
+    onToolAction(toolId, spec.id);
   };
 
   const ambientC = ACT_AMBIENT[point.act].temperatureC;
@@ -376,63 +334,25 @@ export function ToolWorkbench({
               />
             </div>
 
-            <div className="flex flex-col items-end gap-1.5">
-              <div className="inline-flex shrink-0 items-center gap-1.5 rounded border border-sky-400/40 bg-slate-950/80 px-2.5 py-1 font-mono text-[11px] text-sky-200 shadow-lg">
-                <ScanLine className="h-3.5 w-3.5 text-sky-400" />
-                <span>3D 实景 · {detail?.bayName ?? point.zone}</span>
-              </div>
-              {hasThermalSupport && !activeThermalMode && (
-                <button
-                  type="button"
-                  onClick={() =>
-                    setActiveThermalMode(
-                      point.id === 'a2-oil' ? 'oil-temp' : 'ir-3'
-                    )
-                  }
-                  className="inline-flex items-center gap-1 rounded border border-amber-400/50 bg-slate-950/85 px-2.5 py-1 font-mono text-[11px] font-semibold text-amber-300 shadow hover:border-amber-300 hover:bg-slate-900 cursor-pointer"
-                >
-                  <span>打开红外热像取景框</span>
-                </button>
-              )}
+            <div className="inline-flex shrink-0 items-center gap-1.5 rounded border border-sky-400/40 bg-slate-950/80 px-2.5 py-1 font-mono text-[11px] text-sky-200 shadow-lg">
+              <ScanLine className="h-3.5 w-3.5 text-sky-400" />
+              <span>3D 实景 · {detail?.bayName ?? point.zone}</span>
             </div>
           </div>
 
-          {/* 中下部：红外热像仪取景框 / 接地与漏保动态测试表盘 / 底部读数位 */}
-          <div className="space-y-2.5">
-            {activeThermalMode && (
-              <ThermalImagerViewfinder
-                pointId={point.id}
-                variant={variant}
-                act={point.act}
-                mode={activeThermalMode}
-                alreadyRecorded={completedIds.has(activeThermalMode)}
-                onRecordReading={() =>
-                  onToolAction('thermometer', activeThermalMode)
-                }
-                onCloseViewfinder={() => setActiveThermalMode(null)}
-              />
-            )}
-
-            {activeMeterConfig && (
-              <AnimatedMeterPanel
-                config={activeMeterConfig}
-                triggerKey={meterTriggerKey}
-              />
-            )}
-
-            {isCrewPoint ? (
-              <CrewReadout roster={permitRoster} focusedSlot={focusedSlot} />
-            ) : (
-              readout && (
-                <SceneReadoutFrame
-                  title="3D 现场遥测读数屏"
-                  right={`环温 T₀ = ${ambientC} ℃`}
-                >
-                  <ReadoutMetrics readout={readout} />
-                </SceneReadoutFrame>
-              )
-            )}
-          </div>
+          {/* 底部读数位：班前会是人员核对卡，其余点位是同一套 SceneReadoutFrame 遥测读数屏 */}
+          {isCrewPoint ? (
+            <CrewReadout roster={permitRoster} focusedSlot={focusedSlot} />
+          ) : (
+            readout && (
+              <SceneReadoutFrame
+                title="3D 现场遥测读数屏"
+                right={`环温 T₀ = ${ambientC} ℃`}
+              >
+                <ReadoutMetrics readout={readout} />
+              </SceneReadoutFrame>
+            )
+          )}
         </div>
 
         {/* Right-Side Disposition Sheet */}
@@ -602,31 +522,6 @@ export function ToolWorkbench({
                   );
                 })}
               </div>
-
-              {activeThermalMode && (
-                <div className="mt-2.5">
-                  <ThermalImagerViewfinder
-                    pointId={point.id}
-                    variant={variant}
-                    act={point.act}
-                    mode={activeThermalMode}
-                    alreadyRecorded={completedIds.has(activeThermalMode)}
-                    onRecordReading={() =>
-                      onToolAction('thermometer', activeThermalMode)
-                    }
-                    onCloseViewfinder={() => setActiveThermalMode(null)}
-                  />
-                </div>
-              )}
-
-              {activeMeterConfig && (
-                <div className="mt-2.5">
-                  <AnimatedMeterPanel
-                    config={activeMeterConfig}
-                    triggerKey={meterTriggerKey}
-                  />
-                </div>
-              )}
             </section>
 
             <section className="rounded-lg border border-slate-200 bg-white p-3 shadow-sm">

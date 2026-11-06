@@ -479,17 +479,6 @@ export function buildSubstationEnvironment(
   stairLight.position.set(33.0, 2.5, -19.8);
   customPropsGroup.add(stairLight);
 
-  // 室内独立布光（公寓二层房间暖白顶灯 + 一层 10kV 配电室冷白顶灯），替代粗暴降低全局曝光
-  const apartmentRoomLight = new THREE.PointLight(0xfff1d6, 1.85, 11, 1.8);
-  apartmentRoomLight.name = 'APARTMENT_ROOM_LIGHT';
-  apartmentRoomLight.position.set(35.2, 5.7, -23.2);
-  customPropsGroup.add(apartmentRoomLight);
-
-  const hv10kvRoomLight = new THREE.PointLight(0xe0f2fe, 2.1, 14, 1.8);
-  hv10kvRoomLight.name = 'HV10KV_ROOM_LIGHT';
-  hv10kvRoomLight.position.set(35.2, 3.1, -22.4);
-  customPropsGroup.add(hv10kvRoomLight);
-
   const clayMaterial = new THREE.MeshStandardMaterial({
     color: 0xc7cdd2,
     roughness: 0.86,
@@ -684,28 +673,15 @@ export function buildSubstationEnvironment(
             standard.color.setHex(tint);
             standard.needsUpdate = true;
           }
-          // 瓷瓶与绝缘子釉面清漆质感升级（降低 roughness、提高环境反射与高光清漆感）
+          // 瓷瓶与绝缘子釉面质感优化（复用原共享 MeshStandardMaterial，避免创建数百个独立 MeshPhysicalMaterial 造成渲染卡顿）
           if (
             standard?.name === 'MAT_PORCELAIN_BROWN' ||
             standard?.name === 'MAT_INSULATOR.001'
           ) {
-            const physical = new THREE.MeshPhysicalMaterial({
-              name: standard.name,
-              color: standard.color.clone(),
-              map: standard.map,
-              normalMap: standard.normalMap,
-              roughness: 0.22,
-              metalness: 0.08,
-              clearcoat: 0.88,
-              clearcoatRoughness: 0.14,
-              envMapIntensity: 1.35,
-            });
-            if (Array.isArray(mesh.material)) {
-              const idx = mesh.material.indexOf(standard);
-              if (idx >= 0) mesh.material[idx] = physical;
-            } else {
-              mesh.material = physical;
-            }
+            standard.roughness = 0.24;
+            standard.metalness = 0.08;
+            standard.envMapIntensity = 1.15;
+            standard.needsUpdate = true;
           }
           // 主变本体与构架钢材金属反射强化
           if (
@@ -714,7 +690,7 @@ export function buildSubstationEnvironment(
           ) {
             standard.roughness = 0.36;
             standard.metalness = 0.78;
-            standard.envMapIntensity = 1.25;
+            standard.envMapIntensity = 1.15;
             standard.needsUpdate = true;
           }
           if (standard?.name === 'CLOTH_ORANGE') {
@@ -855,14 +831,7 @@ export function buildSubstationEnvironment(
             ? worker.userData.baseRotationY
             : worker.rotation.y;
         const pose = computeCrewIdlePose(elapsedSec, slotIndex, act);
-        worker.scale.set(
-          pose.breathScaleXZ,
-          pose.breathScaleY,
-          pose.breathScaleXZ
-        );
         worker.rotation.y = baseYaw + pose.yawOffset;
-        worker.rotation.z = pose.swayRollZ;
-        worker.rotation.x = pose.pitchX;
       }
     },
     setApartmentDoorOpen(open: boolean) {

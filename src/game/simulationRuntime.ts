@@ -57,7 +57,6 @@ import {
   getActiveWorkPermitRoster,
   getFocusedCrewSlot,
 } from './workPermit';
-import { computeSnappedShadowRig } from './instrumentSim';
 
 /** 越线触电后全屏晃动的时长，结束后切入失败黑屏。 */
 const ELECTROCUTION_SECONDS = 3;
@@ -821,8 +820,7 @@ export function startSimulationRuntime({
       safetyLines.update(currentActNo, storyAct1Active);
 
       const insideApartment = isInsideApartmentRoom(p.x, p.z);
-      // 保持全局曝光恒定 0.86，室内照明由公寓与配电室顶部独立 PointLight 提供，消除进出门天空闪暗
-      renderer.toneMappingExposure = 0.86;
+      renderer.toneMappingExposure = insideApartment ? 0.62 : 0.86;
       const focusPointId = activeWorkbenchPointIdRef?.current ?? null;
       charController.root.visible = focusPointId === null;
       if (focusPointId && p.perspective !== 'drone') {
@@ -934,26 +932,6 @@ export function startSimulationRuntime({
         camera.lookAt(smoothLookAt);
       }
 
-      // 动态跟随玩家/镜头焦点的紧致阴影相机（±22m，按纹素网格对齐防闪烁）
-      if (sunLight.castShadow) {
-        const snappedShadow = computeSnappedShadowRig(
-          smoothLookAt.x,
-          smoothLookAt.z,
-          22,
-          2048
-        );
-        sunLight.target.position.set(
-          snappedShadow.targetX,
-          0,
-          snappedShadow.targetZ
-        );
-        sunLight.target.updateMatrixWorld();
-        sunLight.position.set(
-          snappedShadow.lightX,
-          snappedShadow.lightY,
-          snappedShadow.lightZ
-        );
-      }
       if (shocked && shockStartedAt !== null) {
         const elapsed = (now - shockStartedAt) / 1000;
         const decay = 1 - Math.min(1, elapsed / ELECTROCUTION_SECONDS);

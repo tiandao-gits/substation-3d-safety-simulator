@@ -131,7 +131,6 @@ export function createSubstationScene({
   scene.background = textures.skybox;
 
   let skyboxPanoramaTexture: THREE.Texture | null = null;
-  let outdoorEnvRenderTarget: THREE.WebGLRenderTarget | null = null;
   let isSceneDisposed = false;
 
   new THREE.TextureLoader().load(
@@ -176,34 +175,6 @@ export function createSubstationScene({
 
       skyboxPanoramaTexture = displayTexture;
       scene.background = displayTexture;
-
-      // 用 skybox-8k.webp 生成真实的户外 PBR 环境反射贴图赋给 scene.environment，
-      // 让高压瓷瓶釉面、主变散热器与 GIS 金属外壳呈现真实的蓝天日光反射。
-      // 先降采样至 512x256 再送入 PMREMGenerator（PMREM 本身输出 256 级立方体贴图），避免 8K 像素卷积阻塞主线程。
-      if (!isSoftwareGl && image?.width && image?.height) {
-        try {
-          const envCanvas = document.createElement('canvas');
-          envCanvas.width = 512;
-          envCanvas.height = 256;
-          const envCtx = envCanvas.getContext('2d');
-          if (envCtx) {
-            envCtx.drawImage(image, 0, 0, 512, 256);
-            const envSourceTex = new THREE.CanvasTexture(envCanvas);
-            envSourceTex.mapping = THREE.EquirectangularReflectionMapping;
-            envSourceTex.colorSpace = THREE.SRGBColorSpace;
-            const skyPmrem = new THREE.PMREMGenerator(renderer);
-            skyPmrem.compileEquirectangularShader();
-            outdoorEnvRenderTarget = skyPmrem.fromEquirectangular(envSourceTex);
-            skyPmrem.dispose();
-            envSourceTex.dispose();
-            scene.environment = outdoorEnvRenderTarget.texture;
-            scene.environmentIntensity = 0.68;
-          }
-        } catch (envErr) {
-          console.warn('[SceneSetup] PMREM 户外环境贴图生成回退:', envErr);
-        }
-      }
-
       // 8K 环境贴图在加载阶段先上传，避免它落在进场后的某一帧上。
       renderer.initTexture(displayTexture);
     },
@@ -218,15 +189,12 @@ export function createSubstationScene({
   scene.add(hemiLight);
 
   const sunLight = new THREE.DirectionalLight(0xfff2dc, 1.55);
-  sunLight.position.set(player.x - 28, 42, player.z + 24);
-  sunLight.target.position.set(player.x, 0, player.z);
-  scene.add(sunLight.target);
+  sunLight.position.set(-28, 42, 24);
   sunLight.castShadow = !isSoftwareGl;
   if (!isSoftwareGl) {
     sunLight.shadow.mapSize.width = 2048;
     sunLight.shadow.mapSize.height = 2048;
-    // 将阴影正交相机半宽从 46m 收紧至玩家周围 22m，阴影清晰度直接提升 4 倍
-    const d = 22;
+    const d = 46;
     sunLight.shadow.camera.left = -d;
     sunLight.shadow.camera.right = d;
     sunLight.shadow.camera.top = d;
@@ -478,7 +446,6 @@ export function createSubstationScene({
     safetyLines.dispose();
     debugOverlay?.dispose();
     skyboxPanoramaTexture?.dispose();
-    outdoorEnvRenderTarget?.dispose();
     fallbackEnvTarget.dispose();
     textures.dispose();
     renderer.dispose();

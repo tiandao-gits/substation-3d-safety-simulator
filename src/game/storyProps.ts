@@ -218,11 +218,22 @@ export function createAct1StoryProps(
   boxContactShadow.name = 'prop-box-contact-shadow';
   group.add(boxContactShadow);
 
-  // 配电箱端子间歇性电火花点光源与电弧细丝（与 3D 空间音效包络同步闪烁）
-  const boxArcLight = new THREE.PointLight(0x7dd3fc, 0, 5.8, 2);
-  boxArcLight.position.set(box.x, boxY + 0.92, box.z + 0.18);
-  boxArcLight.name = 'prop-box-arc-light';
-  group.add(boxArcLight);
+  // 配电箱端子间歇性电火花辉光与电弧细丝（使用 MeshBasicMaterial 零光源开销，避免显隐切换触发全场景着色器重编译）
+  const arcGlowMat = new THREE.MeshBasicMaterial({
+    color: 0x38bdf8,
+    transparent: true,
+    opacity: 0,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+  });
+  const boxArcGlow = new THREE.Mesh(
+    new THREE.CircleGeometry(0.18, 16),
+    arcGlowMat
+  );
+  boxArcGlow.position.set(box.x, boxY + 0.9, box.z + 0.16);
+  boxArcGlow.name = 'prop-box-arc-glow';
+  boxArcGlow.visible = false;
+  group.add(boxArcGlow);
 
   const sparkMat = new THREE.MeshBasicMaterial({
     color: 0xe0f2fe,
@@ -258,10 +269,7 @@ export function createAct1StoryProps(
       audioAnomalyIntensity = 0.5
     ) {
       group.visible = visible;
-      if (!visible) {
-        boxArcLight.intensity = 0;
-        return;
-      }
+      if (!visible) return;
 
       aisleLaser.visible = act === 1 && !done.has('aisle');
       aisleContactShadow.visible = act === 1;
@@ -288,9 +296,12 @@ export function createAct1StoryProps(
           Math.sin(elapsed * 7.4);
         const isSparking = burstWave > 0.24;
         const audioGain = 0.55 + Math.max(0.15, audioAnomalyIntensity) * 1.15;
-        boxArcLight.intensity = isSparking
-          ? (1.4 + (burstWave - 0.24) * 3.2) * audioGain
-          : 0.12 * audioGain;
+        boxArcGlow.visible = isSparking;
+        if (isSparking) {
+          arcGlowMat.opacity = Math.min(0.85, (0.35 + (burstWave - 0.24)) * audioGain);
+          const glowScale = 0.85 + (burstWave - 0.24) * 1.2;
+          boxArcGlow.scale.setScalar(glowScale);
+        }
         for (let i = 0; i < sparkFilaments.length; i++) {
           const f = sparkFilaments[i];
           f.visible = isSparking && (i === 0 || burstWave > 0.42);
@@ -301,7 +312,7 @@ export function createAct1StoryProps(
           }
         }
       } else {
-        boxArcLight.intensity = 0;
+        boxArcGlow.visible = false;
         for (const f of sparkFilaments) f.visible = false;
       }
 
