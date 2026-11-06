@@ -89,7 +89,7 @@ test('computeCrewIdlePose produces subtle breathing and act-aware motion', () =>
   assert.ok(act3Pose.pitchX >= 0);
 });
 
-test('computeRendererThrottlePolicy throttles FPS and resolution when unfocused or in UI overlays', () => {
+test('computeRendererThrottlePolicy keeps full sharp pixelRatio and 60 FPS whenever visible and pauses when hidden', () => {
   const active = computeRendererThrottlePolicy({
     documentHidden: false,
     windowFocused: true,
@@ -106,7 +106,7 @@ test('computeRendererThrottlePolicy throttles FPS and resolution when unfocused 
   });
   assert.equal(active.tier, 'active-play');
   assert.equal(active.targetFps, 60);
-  assert.equal(active.pixelRatio, 1.5);
+  assert.equal(active.pixelRatio, 2);
 
   const unfocused = computeRendererThrottlePolicy({
     documentHidden: false,
@@ -121,9 +121,9 @@ test('computeRendererThrottlePolicy throttles FPS and resolution when unfocused 
     isSoftwareGl: false,
     devicePixelRatio: 2,
   });
-  assert.equal(unfocused.tier, 'background');
-  assert.equal(unfocused.targetFps, 15);
-  assert.ok(unfocused.pixelRatio < active.pixelRatio);
+  assert.equal(unfocused.tier, 'active-play');
+  assert.equal(unfocused.targetFps, 60);
+  assert.equal(unfocused.pixelRatio, 2);
 
   const hidden = computeRendererThrottlePolicy({
     documentHidden: true,
@@ -141,4 +141,5 @@ test('computeRendererThrottlePolicy throttles FPS and resolution when unfocused 
   assert.equal(hidden.shouldRender, false);
   assert.equal(hidden.targetFps, 0);
 });
+
 

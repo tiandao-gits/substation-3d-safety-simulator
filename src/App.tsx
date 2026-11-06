@@ -357,9 +357,24 @@ export default function App() {
     setStoryOverlayOpen(open);
   }, []);
 
+  const handleToggleFlashlight = useCallback((force?: boolean) => {
+    const p = playerRef.current;
+    const next = typeof force === 'boolean' ? force : !p.flashlightOn;
+    if (p.flashlightOn === next) return;
+    p.flashlightOn = next;
+    charControllerRef.current?.setFlashlightEnabled(next);
+    hudStore.update({ flashlightOn: next });
+  }, []);
+
   const handleInspectPointChange = useCallback(
     (pointId: Act1PointId | null) => {
       activeWorkbenchPointIdRef.current = pointId;
+      // 关闭处置单时自动关闭机房手电筒照明
+      if (pointId === null && playerRef.current.flashlightOn) {
+        playerRef.current.flashlightOn = false;
+        charControllerRef.current?.setFlashlightEnabled(false);
+        hudStore.update({ flashlightOn: false });
+      }
       const rig = charControllerRef.current;
       if (rig) {
         rig.root.visible =
@@ -904,6 +919,7 @@ export default function App() {
           onApartmentDoorUse={handleApartmentDoorUse}
           onOpenDossier={handleStoryDossier}
           onToggleRunWalk={handleToggleRunWalk}
+          onToggleFlashlight={handleToggleFlashlight}
           onTogglePerspective={handleTogglePerspective}
           onOpenBackpack={() => setActiveModal('backpack')}
           onOpenSettings={() => setActiveModal('settings')}
@@ -947,6 +963,7 @@ export default function App() {
           cutsceneActive={cutscene !== null}
           captureEvidence={handleCaptureEvidence}
           onSyncRosterTo3D={handleSyncRosterTo3D}
+          onToggleFlashlight={handleToggleFlashlight}
           onOverlayChange={handleStoryOverlayChange}
           onInspectPointChange={handleInspectPointChange}
           onChatChange={handleChatChange}

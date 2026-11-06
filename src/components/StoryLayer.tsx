@@ -58,6 +58,7 @@ interface StoryLayerProps {
     reading: string
   ) => CaptureEvidenceResult;
   onSyncRosterTo3D?: (roster: WorkPermitRoster) => void;
+  onToggleFlashlight?: (force?: boolean) => void;
   onOverlayChange: (open: boolean) => void;
   onInspectPointChange?: (pointId: Act1PointId | null) => void;
   onChatChange: (active: boolean) => void;
@@ -77,6 +78,7 @@ export const StoryLayer = forwardRef<StoryLayerHandle, StoryLayerProps>(function
     cutsceneActive = false,
     captureEvidence,
     onSyncRosterTo3D,
+    onToggleFlashlight,
     onOverlayChange,
     onInspectPointChange,
     onChatChange,
@@ -94,6 +96,7 @@ export const StoryLayer = forwardRef<StoryLayerHandle, StoryLayerProps>(function
   const closeAuxModals = () => {
     setDossierOpen(false);
     setWorkbenchPointId(null);
+    onToggleFlashlight?.(false);
   };
 
   // 触电演出只有 3 秒，提前把事故背景图放进缓存。
@@ -118,6 +121,20 @@ export const StoryLayer = forwardRef<StoryLayerHandle, StoryLayerProps>(function
           pointId,
           tool: 'visual',
           actionId: 'visual',
+          silent: true,
+        });
+      }
+      // 10kV 配电室（hv-10kv）温度与电压直接从机房柜面内置仪表读出，无需工具箱，打开即可直接填处置单。
+      if (
+        story.phase === 'act1' &&
+        pointId === 'hv-10kv' &&
+        !story.act1?.points[pointId]?.completedActions.includes('ir-3')
+      ) {
+        dispatch({
+          type: 'act1-action',
+          pointId,
+          tool: 'thermometer',
+          actionId: 'ir-3',
           silent: true,
         });
       }
@@ -353,6 +370,7 @@ export const StoryLayer = forwardRef<StoryLayerHandle, StoryLayerProps>(function
           message={story.message}
           permitSignoff={story.act1?.permitSignoff ?? null}
           onSyncRosterTo3D={onSyncRosterTo3D}
+          onToggleFlashlight={onToggleFlashlight}
           onPermitSign={(judgment) => {
             dispatch({ type: 'act1-permit-sign', judgment });
           }}
@@ -411,6 +429,7 @@ export const StoryLayer = forwardRef<StoryLayerHandle, StoryLayerProps>(function
           }}
           onRequestDrone={() => {
             setWorkbenchPointId(null);
+            onToggleFlashlight?.(false);
             dispatch({
               type: 'message',
               text: '已切换空中视角：按 G 对准未戴安全帽人员取证。',
@@ -419,6 +438,7 @@ export const StoryLayer = forwardRef<StoryLayerHandle, StoryLayerProps>(function
           }}
           onClose={() => {
             setWorkbenchPointId(null);
+            onToggleFlashlight?.(false);
             dispatch({ type: 'message', text: null });
           }}
         />

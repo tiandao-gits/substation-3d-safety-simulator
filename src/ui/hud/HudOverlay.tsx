@@ -35,6 +35,7 @@ interface HudOverlayProps {
   onApartmentDoorUse: () => void;
   onOpenDossier: () => void;
   onToggleRunWalk: () => void;
+  onToggleFlashlight?: (force?: boolean) => void;
   onTogglePerspective: (mode?: CameraPerspective) => void;
   onOpenBackpack: () => void;
   onOpenSettings: () => void;
@@ -54,6 +55,7 @@ export function HudOverlay({
   onApartmentDoorUse,
   onOpenDossier,
   onToggleRunWalk,
+  onToggleFlashlight,
   onTogglePerspective,
   onOpenBackpack,
   onOpenSettings,
@@ -188,6 +190,32 @@ export function HudOverlay({
               onEnterDrone={() => onTogglePerspective('drone')}
               onOpenBackpack={onOpenBackpack}
             />
+          )}
+
+          {actActive && !storyOverlayOpen && hud.insideApartmentRoom && (
+            <div className="pointer-events-auto absolute top-16 left-1/2 z-20 -translate-x-1/2">
+              <button
+                type="button"
+                onClick={() => {
+                  soundEngine.playAuxiliaryTool('flashlight');
+                  onToggleFlashlight?.();
+                }}
+                className={`flex items-center gap-2 rounded-md border px-3.5 py-1.5 font-mono text-xs font-bold shadow-lg transition-colors cursor-pointer ${
+                  hud.flashlightOn
+                    ? 'border-amber-300 bg-amber-500/90 text-slate-950 hover:bg-amber-400'
+                    : 'border-sky-400/60 bg-slate-950/90 text-sky-100 hover:border-amber-300 hover:text-amber-200'
+                }`}
+              >
+                <span
+                  className={`h-2 w-2 rounded-full ${
+                    hud.flashlightOn ? 'bg-slate-950 animate-pulse' : 'bg-slate-400'
+                  }`}
+                />
+                <span>
+                  [T] 机房照明：{hud.flashlightOn ? '圆形光束已开启（随主角移动）' : '已调暗 · 点击打开照亮暗处（选做）'}
+                </span>
+              </button>
+            </div>
           )}
 
           {actActive && !storyOverlayOpen && (

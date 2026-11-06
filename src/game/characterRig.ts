@@ -8,6 +8,9 @@ import {
 } from './rules';
 import { MESSAGES } from '../config/gameText';
 import { MIXAMO_FILENAME_KEYWORDS } from '../config/gameText';
+import { fetchCachedBinaryAsset } from './modelAssetCache';
+
+THREE.Cache.enabled = true;
 
 /**
  * Default Mixamo character & animation asset paths under public/assets/roles/
@@ -1127,38 +1130,32 @@ export function createMixamoInspectorRig(
         onProgress(loaded, total);
       };
 
-      const loadFbx = (url: string): Promise<THREE.Group> =>
-        new Promise((resolve, reject) => {
-          progressByUrl.set(url, {
-            loaded: 0,
-            total: EXPECTED_ROLE_ASSET_BYTES[url] ?? 0,
-          });
-          fbxLoader.load(
-            encodeURI(url),
-            (object) => {
-              const entry = progressByUrl.get(url);
-              if (entry) {
-                entry.loaded = Math.max(entry.loaded, entry.total);
-                entry.total = Math.max(entry.total, entry.loaded);
-              }
-              reportProgress();
-              resolve(object);
-            },
-            (event) => {
-              const entry = progressByUrl.get(url);
-              if (!entry) return;
-              if (typeof event.loaded === 'number') entry.loaded = event.loaded;
-              if (event.lengthComputable && event.total > 0) {
-                entry.total = event.total;
-              }
-              // Some static servers omit Content-Length; keep the totals
-              // monotonic so the bar never runs backwards.
-              entry.total = Math.max(entry.total, entry.loaded);
-              reportProgress();
-            },
-            reject
-          );
+      const loadFbx = async (url: string): Promise<THREE.Group> => {
+        const expectedTotal = EXPECTED_ROLE_ASSET_BYTES[url] ?? 0;
+        progressByUrl.set(url, {
+          loaded: 0,
+          total: expectedTotal,
         });
+        const buffer = await fetchCachedBinaryAsset(
+          url,
+          expectedTotal,
+          (loaded, total) => {
+            const entry = progressByUrl.get(url);
+            if (!entry) return;
+            entry.loaded = loaded;
+            entry.total = Math.max(entry.total, total, loaded);
+            reportProgress();
+          }
+        );
+        const entry = progressByUrl.get(url);
+        if (entry) {
+          entry.loaded = Math.max(entry.loaded, buffer.byteLength);
+          entry.total = Math.max(entry.total, entry.loaded);
+        }
+        reportProgress();
+        const resourcePath = THREE.LoaderUtils.extractUrlBase(encodeURI(url));
+        return fbxLoader.parse(buffer, resourcePath);
+      };
 
       try {
         const [charRes, walkRes, runRes, jumpRes] = await Promise.allSettled([

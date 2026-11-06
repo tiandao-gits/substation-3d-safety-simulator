@@ -297,6 +297,15 @@ export function startSimulationRuntime({
       e.preventDefault();
       const muted = soundEngine.toggleMute();
       setIsMuted(muted);
+    } else if (code === 'KeyT') {
+      const p = playerRef.current;
+      if (isInsideApartmentRoom(p.x, p.z)) {
+        e.preventDefault();
+        p.flashlightOn = !p.flashlightOn;
+        charController.setFlashlightEnabled(p.flashlightOn);
+        soundEngine.playAuxiliaryTool('flashlight');
+        hudStore.update({ flashlightOn: p.flashlightOn });
+      }
     } else if (code === 'Space') {
       e.preventDefault();
       if (e.repeat) return;
@@ -900,8 +909,17 @@ export function startSimulationRuntime({
       safetyLines.update(currentActNo, storyAct1Active);
 
       const insideApartment = isInsideApartmentRoom(p.x, p.z);
-      renderer.toneMappingExposure = insideApartment ? 0.62 : 0.86;
       const focusPointId = activeWorkbenchPointIdRef?.current ?? null;
+      const inDark10kVRoom = insideApartment || focusPointId === 'hv-10kv';
+      if (!inDark10kVRoom && p.flashlightOn) {
+        p.flashlightOn = false;
+      }
+      charController.setFlashlightEnabled(inDark10kVRoom && p.flashlightOn);
+      renderer.toneMappingExposure = inDark10kVRoom
+        ? p.flashlightOn
+          ? 0.64
+          : 0.36
+        : 0.86;
       charController.root.visible = focusPointId === null;
       if (focusPointId && p.perspective !== 'drone') {
         if (focusPointId === 'a2-crew') {
@@ -1057,6 +1075,8 @@ export function startSimulationRuntime({
           y: p.y,
           z: p.z,
           yaw: p.yaw,
+          pitch: p.pitch,
+          insideApartmentRoom: insideApartment,
           droneX: p.droneX,
           droneY: p.droneY,
           droneZ: p.droneZ,

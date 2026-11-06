@@ -17,6 +17,8 @@ export interface HudSnapshot {
   y: number;
   z: number;
   yaw: number;
+  pitch: number;
+  insideApartmentRoom: boolean;
   droneX: number;
   droneY: number;
   droneZ: number;
@@ -55,6 +57,8 @@ export const INITIAL_HUD_SNAPSHOT: HudSnapshot = {
   y: 0,
   z: 30.5,
   yaw: 0,
+  pitch: 0.02,
+  insideApartmentRoom: false,
   droneX: -6.5,
   droneY: 14.8,
   droneZ: -5.0,

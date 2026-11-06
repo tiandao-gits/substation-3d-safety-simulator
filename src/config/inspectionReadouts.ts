@@ -47,47 +47,138 @@ export function buildInspectionReadout(
   const admissible = readings.find((item) => (item.quality ?? 'ok') === 'ok');
 
   switch (point.id) {
-    case 'hv-10kv':
+    case 'hv-10kv': {
+      // 若传入了单相读数（如单元测试覆盖不足分支），保留单相提示
+      if (admissible && admissible.values.length < 2) {
+        const singleVal = admissible.values[0] ?? 0;
+        return {
+          primary: {
+            key: 'peak',
+            label: '最高相温度',
+            value: singleVal.toFixed(1),
+            unit: '℃',
+          },
+          secondary: [
+            {
+              key: 'phase-0',
+              label: 'A 相',
+              value: singleVal.toFixed(1),
+              unit: '℃',
+            },
+          ],
+          note: `${admissible.note ?? ''} · 仅记录单相，未测参考相`,
+        };
+      }
+      if (!admissible && !acts.has('visual')) return null;
+      const values =
+        admissible && admissible.values.length >= 3
+          ? admissible.values
+          : v === 'C'
+            ? [38.4, 96.8, 38.7]
+            : [38.4, 39.0, 38.7];
+      const peak = Math.max(...values);
+      const secondary: ReadoutMetric[] = [
+        ...values.map((value, index) => ({
+          key: `phase-${index}`,
+          label: `${phaseLabel(index)}母排`,
+          value: value.toFixed(1),
+          unit: '℃',
+        })),
+        {
+          key: 'bus-voltage',
+          label: '柜面母线电压',
+          value: '10.4',
+          unit: 'kV',
+        },
+        {
+          key: 'load-current',
+          label: '进线负荷电流',
+          value: '186',
+          unit: 'A',
+        },
+      ];
+      if (acts.has('cabinet-light')) {
+        secondary.push({
+          key: 'dark-check',
+          label: '暗处手电排查',
+          value: v === 'C' ? '3号柜B相接头氧化变色' : '观察窗与电缆沟封堵完好',
+          unit: '',
+        });
+      }
+      return {
+        primary: {
+          key: 'peak',
+          label: '柜面内置表 · 最高相温度',
+          value: peak.toFixed(1),
+          unit: '℃',
+        },
+        secondary,
+        note: '机房柜面内置智能温控仪与微机电压表直读 · 看到读数即可直接填写处置单',
+      };
+    }
+
     case 'bay-temp': {
       if (!admissible) return null;
       const values = admissible.values;
       const peak = values.length > 0 ? Math.max(...values) : 0;
+      const minVal = values.length > 1 ? Math.min(...values) : peak;
+      const deltaT = Math.max(0, peak - minVal);
+      const posNames = ['A 相（左列线夹）', 'B 相（中列线夹）', 'C 相（右列线夹）'];
+      const secondary: ReadoutMetric[] = values.map((value, index) => ({
+        key: `phase-${index}`,
+        label: posNames[index] ?? phaseLabel(index),
+        value: value.toFixed(1),
+        unit: '℃',
+      }));
+      if (values.length >= 2) {
+        secondary.push({
+          key: 'delta-t',
+          label: '最大相间温差 ΔT',
+          value: deltaT.toFixed(1),
+          unit: '℃',
+        });
+      }
       return {
         primary: {
           key: 'peak',
-          label: '最高相温度',
+          label: '三相 3 次测温 · 最高相温度',
           value: peak.toFixed(1),
           unit: '℃',
         },
-        secondary: values.map((value, index) => ({
-          key: `phase-${index}`,
-          label: phaseLabel(index),
-          value: value.toFixed(1),
-          unit: '℃',
-        })),
+        secondary,
         note:
           values.length < 2
             ? `${admissible.note ?? ''} · 仅记录单相，未测参考相`
-            : admissible.note,
+            : `${admissible.note ?? ''} · 左(A)/中(B)/右(C)三相测温 3 次求取最高值`,
       };
     }
 
     case 'a2-oil': {
-      if (!admissible) return null;
-      const oilC = admissible.values[0] ?? 0;
+      if (!admissible && !acts.has('oil-light') && !acts.has('ground-torque')) {
+        return null;
+      }
+      const oilC = admissible?.values[0] ?? (v === 'C' ? 96.2 : 64.2);
       const secondary: ReadoutMetric[] = [];
+      if (admissible || acts.has('oil-temp')) {
+        secondary.push({
+          key: 'oil-temp-item',
+          label: '测点1 · 顶层油温',
+          value: oilC.toFixed(1),
+          unit: '℃',
+        });
+      }
       if (acts.has('oil-light')) {
         secondary.push({
           key: 'oil-light',
-          label: '背光侧法兰',
-          value: v === 'C' ? '见油迹挂滴' : '未见油迹',
+          label: '测点2 · 底部法兰',
+          value: v === 'C' ? '见渗油挂滴与油膜' : '密封完好未见油迹',
           unit: '',
         });
       }
       if (acts.has('ground-torque')) {
         secondary.push({
           key: 'torque',
-          label: '接地螺栓力矩',
+          label: '测点3 · 接地螺栓力矩',
           value: '42',
           unit: 'N·m',
         });
@@ -95,26 +186,35 @@ export function buildInspectionReadout(
       return {
         primary: {
           key: 'oil',
-          label: '顶层油温',
+          label: '主变顶层油温',
           value: oilC.toFixed(1),
           unit: '℃',
         },
         secondary,
-        note: admissible.note,
+        note:
+          admissible?.note ??
+          '主变本体三处并列检测（测点1顶层油温 / 测点2底部法兰油迹 / 测点3接地螺栓力矩）',
       };
     }
 
     case 'aisle': {
-      if (!admissible) return null;
-      const width = admissible.values[0] ?? 0;
+      if (!acts.has('visual') && !admissible) return null;
+      const hasNumericWidth = Boolean(admissible && admissible.values.length > 0);
+      const width = admissible?.values[0] ?? 0.78;
       return {
         primary: {
           key: 'width',
-          label: '巡视通道净宽',
-          value: width.toFixed(2),
-          unit: 'm',
+          label: hasNumericWidth ? '巡视通道净宽' : '现场目视巡检',
+          value: hasNumericWidth ? width.toFixed(2) : '木方/托盘违规占道',
+          unit: hasNumericWidth ? 'm' : '',
         },
         secondary: [
+          {
+            key: 'obstruction',
+            label: '现场堆积物',
+            value: '施工木方与托盘',
+            unit: '',
+          },
           {
             key: 'clearance',
             label: '距带电体',
@@ -122,7 +222,7 @@ export function buildInspectionReadout(
             unit: 'm',
           },
         ],
-        note: '激光测距 · 测点位于材料堆与构架柱之间',
+        note: '巡视与应急通道严禁堆放任何杂物 · 无需测距可直接开具处置单',
       };
     }
 
@@ -168,20 +268,26 @@ export function buildInspectionReadout(
     }
 
     case 'a2-wall': {
-      if (!acts.has('wall-hollow')) return null;
+      if (!acts.has('wall-hollow') && !acts.has('wall-crack')) return null;
       const hollow = v === 'B';
       const secondary: ReadoutMetric[] = [
         {
           key: 'decay',
-          label: '回波阻尼衰减',
+          label: '位置1（东段）回波衰减',
           value: hollow ? '120' : '40',
           unit: 'ms',
+        },
+        {
+          key: 'sound-desc',
+          label: '位置1（东段）敲击听音',
+          value: hollow ? '沉闷“咚咚”空响（中空脱层声）' : '清脆“叮当”实音（抹面密实声）',
+          unit: '',
         },
       ];
       if (acts.has('wall-crack')) {
         secondary.push({
           key: 'crack',
-          label: '裂缝宽度',
+          label: '位置2（中段）裂缝宽度',
           value: hollow ? '1.80' : '0.12',
           unit: 'mm',
         });
@@ -189,14 +295,14 @@ export function buildInspectionReadout(
       return {
         primary: {
           key: 'echo',
-          label: '空鼓锤回波频率',
+          label: '位置1（东段）回波主频',
           value: hollow ? '290' : '195',
           unit: 'Hz',
         },
         secondary,
         note: hollow
-          ? '同点敲击三次读数一致，回波拖尾 120 ms，已按原位标定'
-          : '同点敲击三次读数一致，回波短促',
+          ? '听音说明：东段敲击发出沉闷“咚咚”空鼓声（墙体抹灰层与基层脱离中空）；中段实测裂缝宽 1.80 mm'
+          : '听音说明：东段敲击发出清脆短促实音（抹灰层粘结密实）；中段仅见 0.12 mm 表面细纹',
       };
     }
 

@@ -338,7 +338,7 @@ const ACT1_POINTS_DEF: Act1PointDef[] = [
     focusY: 1.5,
     radius: 4.5,
     profile: 'equipment',
-    clue: '10kV 开关柜柜列带电运行，柜前有绝缘垫与柜号标识，柜内母排接头封闭在柜内。',
+    clue: '10kV 开关柜柜列带电运行，机房光线较暗；柜面内置表计直接显示三相温度与电压读数，可打开照明检查暗处隐患。',
     /** 室内点位：重走时把人放在门内侧，否则会被外墙挡在建筑外。 */
     approach: { x: 33.2, z: -22.72, doorOpen: true },
     requiredActions: ['visual', 'ir-3'],
@@ -346,7 +346,7 @@ const ACT1_POINTS_DEF: Act1PointDef[] = [
       visual: [VISUAL_ACTION],
       thermometer: IR_ACTIONS,
       flashlight: [
-        { id: 'cabinet-light', label: '照亮柜内观察窗与封堵', tool: 'flashlight', quality: 'ok' },
+        { id: 'cabinet-light', label: '打开照明检查暗处隐患（选做）', tool: 'flashlight', quality: 'ok' },
       ],
     },
     standardGrade: { A: 'P0', B: 'P0', C: 'P2', D: 'P0' },
@@ -361,18 +361,17 @@ const ACT1_POINTS_DEF: Act1PointDef[] = [
     id: 'aisle',
     act: 1,
     name: '巡视通道',
-    shortName: '通道检测',
+    shortName: '通道巡检',
     zone: '前侧/后侧间隔区之间',
     x: 8.5,
     z: 1.0,
     focusY: 0.8,
     radius: 5.0,
     profile: 'construction',
-    clue: '连接前后两片间隔区的巡视通道，局部堆放木方与木托盘；材料属北侧扩建施工单位。',
-    requiredActions: ['visual', 'clearance'],
+    clue: '连接前后两片间隔区的巡视通道严禁堆放物料，现场违规堆放北侧扩建施工单位的木方与木托盘，直接开具处置单要求清理。',
+    requiredActions: ['visual'],
     actions: {
       visual: [VISUAL_ACTION],
-      laser: [CLEARANCE_ACTION],
     },
     standardGrade: { A: 'P1', B: 'P1', C: 'P1', D: 'P1' },
     finding: {
@@ -393,7 +392,7 @@ const ACT1_POINTS_DEF: Act1PointDef[] = [
     focusY: 2.8,
     radius: 5.0,
     profile: 'equipment',
-    clue: '220kV F02 间隔隔离开关与引线接头，站在警戒线外巡视，与带电体保持 3 m 以上。',
+    clue: '220kV F02 间隔隔离开关与左（A相）、中（B相）、右（C相）三相引线接头，站在警戒线外依次测量三相温度并取最高值判级。',
     requiredActions: ['visual', 'ir-3'],
     actions: {
       visual: [VISUAL_ACTION],
@@ -438,7 +437,7 @@ const ACT2_POINTS_DEF: Act1PointDef[] = [
     id: 'a2-wall',
     act: 2,
     name: '主变防火墙',
-    shortName: '防火墙空鼓',
+    shortName: '防火墙检查',
     zone: '1# / 2# 主变之间防火墙',
     // 站在 1# 主变侧（墙南面外侧）：防火墙中心线 z=12.87、半厚 0.26，
     // 点位必须落在墙的 1# 侧，不能落到墙北面 2# 主变那边。
@@ -447,15 +446,15 @@ const ACT2_POINTS_DEF: Act1PointDef[] = [
     focusY: 1.6,
     radius: 4.5,
     profile: 'construction',
-    clue: '1# 与 2# 主变之间的防火墙，靠东段（1# 主变侧）抹面局部受潮；现场敲击检查抹灰层空鼓与脱层。',
-    requiredActions: ['visual', 'wall-hollow'],
+    clue: '1# 与 2# 主变之间的防火墙分两处位置检查：东段受潮抹面敲击听音辨识空鼓，中段接缝处测量墙面裂缝宽度。',
+    requiredActions: ['visual', 'wall-hollow', 'wall-crack'],
     actions: {
       visual: [VISUAL_ACTION],
       'hollow-hammer': [
-        { id: 'wall-hollow', label: '敲击防火墙检查空鼓', tool: 'hollow-hammer', quality: 'ok' },
+        { id: 'wall-hollow', label: '位置1（东段受潮区）：敲击听音查空鼓', tool: 'hollow-hammer', quality: 'ok' },
       ],
       feeler: [
-        { id: 'wall-crack', label: '测量墙面裂缝宽度', tool: 'feeler', quality: 'ok' },
+        { id: 'wall-crack', label: '位置2（中段接缝区）：测量墙面裂缝宽度', tool: 'feeler', quality: 'ok' },
       ],
     },
     standardGrade: { A: 'P0', B: 'P2', C: 'P0', D: 'P0' },
@@ -469,24 +468,26 @@ const ACT2_POINTS_DEF: Act1PointDef[] = [
   {
     id: 'a2-oil',
     act: 2,
-    name: '主变本体油温',
-    shortName: '主变油温',
+    name: '主变本体检测',
+    shortName: '主变本体',
     zone: '1# 主变检修区',
     x: -28.3,
     z: 13.8,
     focusY: 1.8,
     radius: 5.0,
     profile: 'equipment',
-    clue: '1# 主变本体、散热器与油枕朝向检修通道，地面有防油围堰。',
-    requiredActions: ['visual', 'oil-temp'],
+    clue: '1# 主变本体设三个并列检测点：上部测量顶层油温、底部法兰背光照亮查渗漏、下部复核本体接地扁铁螺栓力矩。',
+    requiredActions: ['visual', 'oil-temp', 'oil-light', 'ground-torque'],
     actions: {
       visual: [VISUAL_ACTION],
-      thermometer: [{ id: 'oil-temp', label: '测量顶层油温', tool: 'thermometer', quality: 'ok' }],
-      torque: [
-        { id: 'ground-torque', label: '复核接地螺栓力矩', tool: 'torque', quality: 'ok' },
+      thermometer: [
+        { id: 'oil-temp', label: '测点1（本体上部）：测量顶层油温', tool: 'thermometer', quality: 'ok' },
       ],
       flashlight: [
-        { id: 'oil-light', label: '背光侧照亮检查法兰油迹', tool: 'flashlight', quality: 'ok' },
+        { id: 'oil-light', label: '测点2（底部法兰）：背光侧照亮查油迹', tool: 'flashlight', quality: 'ok' },
+      ],
+      torque: [
+        { id: 'ground-torque', label: '测点3（接地引下线）：复核接地螺栓力矩', tool: 'torque', quality: 'ok' },
       ],
     },
     standardGrade: { A: 'P0', B: 'P0', C: 'P2', D: 'P0' },
@@ -1265,8 +1266,8 @@ export function applyAct1Action(
   } else if (spec.id === 'wall-hollow') {
     text =
       state.variant === 'B'
-        ? '敲击：防火墙 1# 主变侧抹灰层回声发空，局部脱层。'
-        : '敲击：防火墙抹面密实，回声均匀。';
+        ? '位置1（东段受潮区）敲击：听见沉闷“咚咚”空响（回波 290 Hz / 衰减 120 ms），抹灰层与基层脱层空鼓。'
+        : '位置1（东段受潮区）敲击：听见清脆“叮当”实音（回波 195 Hz / 衰减 40 ms），抹面密实无空鼓。';
   } else if (spec.id === 'oil-temp') {
     // 1# 主变已停电，读数取停电后复测值：停电前负荷与渗漏/油位一起作为佐证。
     const hot = state.variant === 'C';
@@ -1281,7 +1282,7 @@ export function applyAct1Action(
         ? `停电前负荷 62% · 停电后 1 h 复测 · 环温 ${ambientC} ℃ · 油位低于正常刻度 · 本体底部渗漏`
         : `停电后 1 h 复测 · 环温 ${ambientC} ℃ · 油位在正常刻度 · 本体无渗漏`
     );
-    text = `记录：顶层油温 ${oilC.toFixed(1)} ℃`;
+    text = `测点1（本体上部）：顶层油温 ${oilC.toFixed(1)} ℃`;
   } else if (spec.id === 'leakage-test') {
     // 第三幕配电箱隐患常驻，漏保读数在所有变体下都显示失效。
     r = reading(
@@ -1295,20 +1296,20 @@ export function applyAct1Action(
   } else if (spec.id === 'cabinet-light') {
     text =
       state.variant === 'C'
-        ? '辅助核验：照亮 3 号柜观察窗，见 B 相母排接头表面氧化变色，柜底防火封堵严密。'
-        : '辅助核验：照亮柜内观察窗，三相母排色泽正常，柜底防火封堵与绝缘垫完好。';
+        ? '暗处排查：圆形光束照亮 3 号柜观察窗与电缆沟，见 B 相母排接头表面氧化变色，柜底封堵严密。'
+        : '暗处排查：圆形光束照亮柜内观察窗与电缆沟，三相母排色泽正常，柜底防火封堵完好。';
   } else if (spec.id === 'ground-torque') {
-    text = '辅助核验：1# 主变本体接地引下线螺栓紧固力矩 42 N·m（标准 ≥ 40 N·m），接地可靠。';
+    text = '测点3（接地引下线）：1# 主变本体接地螺栓紧固力矩 42 N·m（规程 ≥ 40 N·m），接地可靠。';
   } else if (spec.id === 'wall-crack') {
     text =
       state.variant === 'B'
-        ? '辅助核验：防火墙 1# 主变侧受潮处抹灰裂缝宽度 1.8 mm（标准 ≤ 0.3 mm），伴随局部脱层。'
-        : '辅助核验：墙面仅见表面收缩细纹（< 0.15 mm），无结构性与脱层裂缝。';
+        ? '位置2（中段接缝区）测缝：墙面裂缝宽度 1.80 mm（标准 ≤ 0.30 mm），伴随抹灰层开裂脱层。'
+        : '位置2（中段接缝区）测缝：墙面仅见表面收缩细纹 0.12 mm（标准 ≤ 0.30 mm），无结构裂缝。';
   } else if (spec.id === 'oil-light') {
     text =
       state.variant === 'C'
-        ? '辅助核验：背光侧照亮见主变底部放油阀法兰边缘有新鲜渗油挂滴，围堰内有油膜反光。'
-        : '辅助核验：背光侧照亮检查底部阀门与法兰密封垫完好，无渗漏油迹。';
+        ? '测点2（底部法兰）：背光侧照亮见主变底部放油阀法兰边缘有新鲜渗油挂滴，围堰内见油膜反光。'
+        : '测点2（底部法兰）：背光侧照亮检查底部阀门与法兰密封垫完好，无渗漏油迹。';
   } else if (spec.id === 'box-voltage') {
     text = '辅助核验：配电箱进线电压 228 V，PE 保护零线接触不良（零地电位差 18.4 V 偏高）。';
   } else if (spec.id === 'visual') {

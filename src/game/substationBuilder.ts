@@ -17,101 +17,27 @@ import {
   type WorkPermitRoster,
 } from './workPermit';
 import { computeCrewIdlePose } from './instrumentSim';
+import { fetchCachedGlbParts } from './modelAssetCache';
 
-/** 由 `scripts/split-glb.ts` 生成的 GLB 分片清单。 */
-interface GlbPartsManifest {
-  source: string;
-  totalBytes: number;
-  partBytes: number;
-  partCount: number;
-  parts: string[];
-}
+THREE.Cache.enabled = true;
 
 const GLB_PARTS_MANIFEST_SUFFIX = '.parts.json';
 
 /**
- * 按清单并行拉取 GLB 分片，拼回与单文件字节完全一致的 ArrayBuffer。
- *
- * 分片只是传输层的切分（绕过单文件体积限制），不做任何重编码，
- * 因此拼回后的数据与原始模型逐字节相同，画质不受影响。
- *
- * 不做任何降级回退：清单缺失、任一分支 404、总长度对不上都会直接抛错。
+ * 按清单拉取或从持久化缓存读取 GLB 分片，拼回与单文件字节完全一致的 ArrayBuffer。
+ * 只要 `.parts.json` 清单指纹未变，直接从本地持久缓存（Cache Storage / IndexedDB / 内存）读取，无需重复下载。
  */
 async function fetchGlbParts(
   assetBaseUrl: string,
   fileName: string,
   onProgress?: (loadedBytes: number, totalBytes: number) => void
 ): Promise<ArrayBuffer> {
-  const manifestUrl = `${assetBaseUrl}${fileName}${GLB_PARTS_MANIFEST_SUFFIX}`;
-  const manifestResponse = await fetch(manifestUrl);
-  if (!manifestResponse.ok) {
-    throw new Error(`GLB 分片清单读不到（HTTP ${manifestResponse.status}）：${manifestUrl}`);
-  }
-  const manifest = (await manifestResponse.json()) as GlbPartsManifest;
-  if (!manifest || !Array.isArray(manifest.parts) || manifest.parts.length === 0) {
-    throw new Error(`GLB 分片清单格式不对：${manifestUrl}`);
-  }
-
-  const totalBytes = manifest.totalBytes;
-  let loadedBytes = 0;
-  // 进度回调按 1% 节流，避免每个网络分块都触发一次 React 重渲染。
-  const progressStep = Math.max(1, Math.floor(totalBytes / 100));
-  let nextReport = progressStep;
-
-  const partBuffers = await Promise.all(
-    manifest.parts.map(async (partName) => {
-      const partUrl = `${assetBaseUrl}${partName}`;
-      const response = await fetch(partUrl);
-      if (!response.ok) {
-        throw new Error(`GLB 分片读取失败（HTTP ${response.status}）：${partUrl}`);
-      }
-      if (!response.body) {
-        const whole = await response.arrayBuffer();
-        loadedBytes += whole.byteLength;
-        onProgress?.(loadedBytes, totalBytes);
-        return whole;
-      }
-      const reader = response.body.getReader();
-      const chunks: Uint8Array[] = [];
-      for (;;) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        if (!value || value.byteLength === 0) continue;
-        chunks.push(value);
-        loadedBytes += value.byteLength;
-        if (loadedBytes >= nextReport) {
-          nextReport = loadedBytes + progressStep;
-          onProgress?.(loadedBytes, totalBytes);
-        }
-      }
-      let size = 0;
-      for (const chunk of chunks) size += chunk.byteLength;
-      const merged = new Uint8Array(size);
-      let offset = 0;
-      for (const chunk of chunks) {
-        merged.set(chunk, offset);
-        offset += chunk.byteLength;
-      }
-      return merged.buffer;
-    })
+  return fetchCachedGlbParts(
+    assetBaseUrl,
+    fileName,
+    GLB_PARTS_MANIFEST_SUFFIX,
+    onProgress
   );
-
-  const assembled = new Uint8Array(totalBytes);
-  let cursor = 0;
-  for (const buffer of partBuffers) {
-    if (cursor + buffer.byteLength > totalBytes) {
-      throw new Error(
-        `GLB 分片总长度超出清单声明（${cursor + buffer.byteLength} > ${totalBytes}）`
-      );
-    }
-    assembled.set(new Uint8Array(buffer), cursor);
-    cursor += buffer.byteLength;
-  }
-  if (cursor !== totalBytes) {
-    throw new Error(`GLB 分片总长度与清单不符（${cursor} != ${totalBytes}）`);
-  }
-  onProgress?.(totalBytes, totalBytes);
-  return assembled.buffer;
 }
 
 export interface CloneSceneNodeOptions {
